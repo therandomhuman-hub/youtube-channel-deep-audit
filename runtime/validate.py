@@ -84,8 +84,12 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
 
     vids=[v.get("id") for v in report.get("videos",[]) if isinstance(v,dict)]
     transcript_audit=report.get("transcript_audit",{})
-    if transcript_audit.get("target_video_count") not in (None,len(vids)):
+    target_count=transcript_audit.get("target_video_count")
+    attempted_count=transcript_audit.get("attempted_video_count")
+    if target_count not in (None,len(vids)):
         issues.append({"path":"transcript_audit.target_video_count","message":"does not match video count"})
+    if target_count is not None and target_count == len(vids) and attempted_count != len(vids):
+        issues.append({"path":"transcript_audit.attempted_video_count","message":"every discovered video requires a transcript/caption attempt"})
     full_count=transcript_audit.get("full_transcript_count")
     if isinstance(full_count,(int,float)) and (full_count<0 or full_count>len(vids)):
         issues.append({"path":"transcript_audit.full_transcript_count","message":"invalid full transcript count"})
