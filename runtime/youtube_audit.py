@@ -916,7 +916,7 @@ def build_claim_registry(videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if status not in {"VERIFIED", "CREATOR_REPORTED", "OBSERVED", "INFERRED", "UNVERIFIED", "CONTRADICTED", "WITHDRAWN"}:
                 status = "UNVERIFIED"
             evidence_ids = []
-            if claim.get("source") == "YOUTUBE_TRANSCRIPT_API_PUBLIC":
+            if claim.get("source", "").startswith("YOUTUBE_"):
                 evidence_ids = [f"TRANSCRIPT-{vid}"]
             else:
                 evidence_ids = [f"VIDEO-{vid}"]
