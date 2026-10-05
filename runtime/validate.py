@@ -6,6 +6,12 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
+try:
+    from jsonschema import Draft202012Validator, FormatChecker
+except Exception:
+    Draft202012Validator = None
+    FormatChecker = None
+
 CLAIM_STATES={"VERIFIED","CREATOR_REPORTED","OBSERVED","INFERRED","UNVERIFIED","CONTRADICTED","WITHDRAWN"}
 METRIC_STATES={"OBSERVED","DERIVED","ESTIMATED","REPORTED","UNAVAILABLE"}
 SECRET_PATTERNS=[
@@ -54,6 +60,14 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
     except Exception as e:
         return [{"path":"audit.json","message":"invalid JSON: "+str(e)}],warnings
 
+    if Draft202012Validator:
+        checker=Draft202012Validator(schema, format_checker=FormatChecker())
+        for err in checker.iter_errors(report):
+            path=".".join(str(x) for x in err.absolute_path) or "$"
+            issues.append({"path":path,"message":"schema validation: "+err.message})
+    else:
+        warnings.append({"path":"schema","message":"jsonschema unavailable; semantic schema validation skipped"})
+
     required_fields=["metadata","channel","coverage","access_matrix","snapshots","videos","posts","comments_summary","playlists","channel_sections","transcripts","sources","claims","metrics","calculations","risks","hypotheses","experiments","recommendations","benchmarks","knowledge_gaps","deltas","policy_checks","decision_queue","validation","executive_summary","beginner_plan","analysis","reproducibility","self_audit"]
     for f in required_fields:
         if f not in report: issues.append({"path":f,"message":"required report field missing"})
@@ -61,6 +75,12 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
         issues.append({"path":"metadata.input_contract.api_key_exposed","message":"must be false"})
     if report.get("reproducibility",{}).get("credential_exposed") is not False:
         issues.append({"path":"reproducibility.credential_exposed","message":"must be false"})
+    coverage=report.get("coverage",{})
+    inventory_complete=bool(coverage.get("inventory",{}).get("complete"))
+    details_complete=bool(coverage.get("video_details_complete", coverage.get("video_details",{}).get("complete")))
+    status=report.get("validation",{}).get("status")
+    if status=="COLLECTION_COMPLETE_TO_ACCESSIBLE_BOUNDARY" and not (inventory_complete and details_complete):
+        issues.append({"path":"validation.status","message":"claims complete collection while inventory or video details are partial"})
 
     vids=[v.get("id") for v in report.get("videos",[]) if isinstance(v,dict)]
     if len(vids)!=len(set(vids)): issues.append({"path":"videos","message":"duplicate video IDs"})
