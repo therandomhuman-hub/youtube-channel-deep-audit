@@ -588,12 +588,11 @@ function save(){{const days=boxes.filter(b=>b.checked).map(b=>+b.dataset.day);lo
 
 def write_artifacts(out: Path, report: dict[str,Any], comments: list[dict[str,Any]]) -> None:
     atomic_write(out/"audit.json", report)
-    atomic_write(out/"schema.json", {
-        "$schema":"https://json-schema.org/draft/2020-12/schema",
-        "type":"object",
-        "required":["metadata","channel","coverage","access_matrix","snapshots","videos","posts","comments_summary","playlists","channel_sections","transcripts","sources","claims","metrics","calculations","risks","hypotheses","experiments","recommendations","benchmarks","knowledge_gaps","deltas","policy_checks","decision_queue","validation","executive_summary","beginner_plan","analysis","reproducibility","self_audit"],
-        "properties":{"videos":{"type":"array"},"claims":{"type":"array"},"metrics":{"type":"array"},"sources":{"type":"array"},"metadata":{"type":"object"},"validation":{"type":"object"}}
-    })
+    schema_source = Path(__file__).resolve().parents[1] / "schema.json"
+    if schema_source.exists():
+        (out/"schema.json").write_text(schema_source.read_text(encoding="utf-8"), encoding="utf-8")
+    else:
+        raise RuntimeError("Canonical schema.json is missing from the repository.")
     (out/"config.yaml").write_text("version: 11.2\nmode: DEEP\npublic_only: true\ncredential_source: GITHUB_ACTIONS:YOUTUBE_API_KEY\n", encoding="utf-8")
     csv_write(out/"video_inventory.csv",[
         {"video_id":v.get("id"),"title":v.get("snippet",{}).get("title"),"published_at":v.get("snippet",{}).get("publishedAt"),"views":v.get("statistics",{}).get("viewCount"),
