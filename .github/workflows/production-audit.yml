@@ -1,0 +1,123 @@
+name: Production YouTube Channel Audit
+
+on:
+  push:
+    paths:
+      - ".audit/request.json"
+  workflow_dispatch:
+    inputs:
+      channel_url:
+        description: "One public YouTube channel URL or @handle"
+        required: true
+        type: string
+      skip_browser:
+        description: "Skip public browser surfaces"
+        required: false
+        default: false
+        type: boolean
+      skip_comments:
+        description: "Skip public comments/replies"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: youtube-channel-audit-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Resolve audit request
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p audit
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            test -f .audit/request.json
+            python -c 'import json; from pathlib import Path; p=json.loads(Path(".audit/request.json").read_text(encoding="utf-8")); print("CHANNEL URL:", p["channel_url"])' > audit/request.txt
+          else
+            printf '%s\n' "CHANNEL URL: ${{ github.event.inputs.channel_url }}" > audit/request.txt
+          fi
+          python runtime/request.py --issue-body "$(cat audit/request.txt)" > audit/channel_url.txt
+
+      - name: Verify YouTube API secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$YOUTUBE_API_KEY"
+          printf '%s\n' 'credential_present=true' > audit/credential_status.txt
+
+      - name: Run production audit
+        shell: bash
+        run: |
+          set +e
+          FLAGS=""
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.skip_browser }}" == "true" ]]; then FLAGS="$FLAGS --skip-browser"; fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.skip_comments }}" == "true" ]]; then FLAGS="$FLAGS --skip-comments"; fi
+          python youtube_audit.py --skill skill.md --channel "$(cat audit/channel_url.txt)" --output audit $FLAGS > audit/collector.log 2>&1
+          echo "$?" > audit/collector_exit_code.txt
+          cat audit/collector.log
+          exit 0
+
+      - name: Validate audit package
+        shell: bash
+        run: |
+          set +e
+          python runtime/validate.py audit > audit/validation.json 2>&1
+          echo "$?" > audit/validator_exit_code.txt
+          cat audit/validation.json
+          exit 0
+
+      - name: Build release binding
+        shell: bash
+        run: |
+          set +e
+          python runtime/build_release.py audit > audit/release_build.log 2>&1
+          echo "$?" > audit/release_builder_exit_code.txt
+          cat audit/release_build.log
+          exit 0
+
+      - name: Final release gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          c=$(cat audit/collector_exit_code.txt)
+          v=$(cat audit/validator_exit_code.txt)
+          b=$(cat audit/release_builder_exit_code.txt)
+          [[ "$c" == "0" && "$v" == "0" && "$b" == "0" ]]
+          printf '%s\n' 'RELEASED=true' > audit/release_status.txt
+
+      - name: Upload production audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-channel-deep-audit-${{ github.run_id }}
+          path: audit/
+          if-no-files-found: error
+          retention-days: 30
