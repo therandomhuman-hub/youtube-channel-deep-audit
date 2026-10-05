@@ -206,7 +206,7 @@ def classify_http(code: int, reason: str | None) -> str:
 def parse_iso_duration_seconds(value: str | None) -> float | None:
     if not value or not isinstance(value, str):
         return None
-    m = re.fullmatch(r'PT(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+(?:\\.\\d+)?)S)?', value)
+    m = re.fullmatch(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?', value)
     if not m:
         return None
     h = float(m.group(1) or 0)
