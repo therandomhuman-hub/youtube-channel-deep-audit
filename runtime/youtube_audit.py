@@ -609,7 +609,7 @@ def browser_collect(
                         segments = page.locator("ytd-transcript-segment-renderer").evaluate_all(
                             "els => els.map(e => ({"
                             "text: (e.innerText || e.textContent || '').trim(),"
-                            "start: parseFloat((e.querySelector('.segment-timestamp')?.innerText || '0').replace(/[^0-9:.]/g,'')) || 0,"
+                            "start: 0,"
                             "duration: 0"
                             "}))"
                         )
