@@ -1,4 +1,4 @@
-# YouTube Channel Deep Audit — Production Skill v11.4
+# YouTube Channel Deep Audit — Production Skill v11.5
 ## Canonical Researcher + Verifier + Analyst + Auditor + Decision Engine
 
 **Status:** PRODUCTION-READY CANONICAL SPECIFICATION + EXECUTION CONTRACT + INDIVIDUAL VIDEO EVIDENCE AUDIT  
@@ -574,7 +574,7 @@ The YouTube Data API `captions.list` endpoint requires authorization and does no
 Never download copyrighted audio/video solely to generate a transcript.
 
 #
-# 4J. MANDATORY INDIVIDUAL-VIDEO EVIDENCE AUDIT (v11.4)
+# 4J. MANDATORY INDIVIDUAL-VIDEO EVIDENCE AUDIT (v11.5)
 
 A video with only title/description/metrics is **not** considered fully audited.
 
@@ -1935,7 +1935,7 @@ CHATGPT
 Any request that attempts to put an API key in the issue body, channel URL, skill file, commit, or artifact must be rejected.
 
 
-## v11.4 Transcript-First Hardening
+## v11.5 Transcript-First Hardening
 
 For every discovered video, transcript retrieval is exhaustive by default. The collector tries:
 1. public transcript retrieval;
@@ -1949,3 +1949,8 @@ A transcript establishes **what the creator said**. It does not establish that r
 If a transcript cannot be obtained, the video remains auditable for public metadata but its content-learning confidence must remain LOW and the report must say so explicitly.
 
 The production audit never persists the full transcript. It retains hashes, word counts, bounded excerpts, claim categories, evidence obligations, and audit signals only.
+
+
+## v11.5 Transcript quality control
+
+A retrieved transcript is not accepted as high-quality merely because text was returned. The runtime compares transcript word count with the actual public video duration using a broad 90–220 words-per-minute sanity band. A questionable result triggers another public transcript provider where available. If the remaining transcript is still questionable, content-audit confidence is downgraded and the report exposes the quality warning.
