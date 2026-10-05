@@ -49,10 +49,7 @@ jobs:
       - run: python -m unittest discover -s tests -v
 
   audit:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'issues' && github.event.issue.user.login == 'therandomhuman-hub' && startsWith(github.event.issue.title, '[youtube-audit]')) ||
-      (github.event_name == 'push' && hashFiles('.audit/request.json') != '')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'issues' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
