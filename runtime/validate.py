@@ -96,6 +96,16 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
         if t.get("text_retained") is not False:
             issues.append({"path":f"videos[{i}].transcript_audit.text_retained","message":"full transcript text must not be persisted"})
         a=v.get("video_analysis",{}) or {}
+        if not a:
+            issues.append({"path":f"videos[{i}].video_analysis","message":"every discovered video must have an individual audit"})
+        original=a.get("original_evidence",{}) or {}
+        for field in ("video_id","url","title","description","evidence_boundary"):
+            if field not in original:
+                issues.append({"path":f"videos[{i}].video_analysis.original_evidence.{field}","message":"original public evidence field missing"})
+        if a.get("decision") not in {"KEEP","TEST","MODIFY","AVOID","RESEARCH MORE"}:
+            issues.append({"path":f"videos[{i}].video_analysis.decision","message":"invalid beginner decision"})
+        if a.get("confidence") is None:
+            issues.append({"path":f"videos[{i}].video_analysis.confidence","message":"per-video confidence missing"})
         rating=a.get("overall_beginner_rating")
         if rating is not None and (not isinstance(rating,(int,float)) or not 0<=rating<=10):
             issues.append({"path":f"videos[{i}].video_analysis.overall_beginner_rating","message":"must be between 0 and 10"})
