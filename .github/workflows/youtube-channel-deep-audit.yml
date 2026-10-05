@@ -2,7 +2,8 @@ name: YouTube Channel Deep Audit
 
 on:
   push:
-    branches: [main]
+    paths:
+      - ".audit/request.json"
   workflow_dispatch:
     inputs:
       channel_url:
@@ -50,7 +51,8 @@ jobs:
   audit:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.issue.user.login == 'therandomhuman-hub' && startsWith(github.event.issue.title, '[youtube-audit]'))
+      (github.event_name == 'issues' && github.event.issue.user.login == 'therandomhuman-hub' && startsWith(github.event.issue.title, '[youtube-audit]')) ||
+      (github.event_name == 'push' && hashFiles('.audit/request.json') != '')
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
@@ -80,10 +82,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p audit
-          python runtime/request.py \
-            --dispatch-url "$DISPATCH_URL" \
-            --issue-body "$ISSUE_BODY" \
-            > audit/channel_url.txt
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            test -f .audit/request.json
+            python - <<'PY' > audit/request_body.txt
+import json
+from pathlib import Path
+payload = json.loads(Path(".audit/request.json").read_text(encoding="utf-8"))
+print("CHANNEL URL:", payload["channel_url"])
+PY
+            python runtime/request.py --issue-body "$(cat audit/request_body.txt)" > audit/channel_url.txt
+          else
+            python runtime/request.py \
+              --dispatch-url "$DISPATCH_URL" \
+              --issue-body "$ISSUE_BODY" \
+              > audit/channel_url.txt
+          fi
 
       - name: Verify API secret is available without revealing it
         shell: bash
