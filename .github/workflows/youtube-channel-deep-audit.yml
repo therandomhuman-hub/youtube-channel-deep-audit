@@ -1,6 +1,8 @@
 name: YouTube Channel Deep Audit
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       channel_url:
@@ -30,6 +32,21 @@ permissions:
   issues: write
 
 jobs:
+  push-validation:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - run: python -m compileall -q runtime youtube_audit.py tests
+      - run: python -m unittest discover -s tests -v
+
   audit:
     if: >-
       github.event_name == 'workflow_dispatch' ||
