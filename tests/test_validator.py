@@ -37,6 +37,7 @@ class ValidatorTests(unittest.TestCase):
     def test_valid_minimal_package(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d); report=self.base_report()
+            report["videos"][0]["transcript_audit"]={"status":"NO_TRANSCRIPT_FOUND","text_retained":False}
             (root/"audit.json").write_text(json.dumps(report),encoding="utf-8")
             (root/"schema.json").write_text(json.dumps({"type":"object","required":[],"properties":{}}),encoding="utf-8")
             (root/"audit.html").write_text("<!doctype html><html lang='en'><head></head><body><h1>x</h1><script>localStorage.setItem('x','1');window.print();</script></body></html>",encoding="utf-8")
