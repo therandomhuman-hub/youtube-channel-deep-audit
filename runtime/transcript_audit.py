@@ -13,6 +13,8 @@ import time
 from typing import Any, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 
 DEFAULT_LANGUAGES = ("en", "en-US", "en-GB", "en-IN")
@@ -267,7 +269,7 @@ def _hosted_transcript_record(video_id: str, payload: Any, *, source_url: str, s
     ) | {"source_url": source_url}
 
 
-def _fetch_public_hosted_transcript(video_id: str, languages: Iterable[str]) -> dict[str, Any] | None:
+def _fetch_public_hosted_transcript(video_id: str, languages: Iterable[str], expected_duration_seconds: float | None = None) -> dict[str, Any] | None:
     """Try public no-key transcript mirrors after YouTube-native methods are blocked."""
     lang_list = [str(x) for x in languages if x]
     lang = next((x for x in lang_list if x.lower().split("-")[0] == "en"), "en")
@@ -303,14 +305,15 @@ def _apply_transcript_sanity(record: dict[str, Any], expected_duration_seconds: 
     if not words:
         return record
     wpm = words / (float(expected_duration_seconds) / 60.0)
+    plausible = 90 <= wpm <= 220
     record['transcript_sanity'] = {
         'words_per_minute': round(wpm, 1),
-        'plausible': 90 <= wpm <= 220,
+        'plausible': plausible,
         'expected_duration_seconds': round(float(expected_duration_seconds), 2),
         'rule': 'Broad completeness sanity check only; it does not prove transcript accuracy.'
     }
-    record['quality_grade'] = 'PLAUSIBLE' if 90 <= wpm <= 220 else 'QUESTIONABLE'
-    if record['quality_grade'] == 'QUESTIONABLE':
+    record['quality_grade'] = 'PLAUSIBLE' if plausible else 'QUESTIONABLE'
+    if not plausible:
         record['quality_warning'] = 'Transcript word density is outside the broad 90–220 wpm sanity band.'
     return record
 
@@ -423,7 +426,6 @@ def audit_learning(
     status = transcript.get("status", "")
     full = status == "FULL_TRANSCRIPT_AVAILABLE"
     words = int(transcript.get("word_count", 0) or 0)
-    transcript_quality = transcript.get("quality_grade") or "UNKNOWN"
     proof = int(transcript.get("proof_signal_count", 0) or 0)
     process = int(transcript.get("process_signal_count", 0) or 0)
     replication = int(transcript.get("replication_risk_signal_count", 0) or 0)
@@ -539,3 +541,45 @@ def audit_learning(
     takeaway = (
         "Use the transcript to learn the problem, mechanism, steps and measurement logic; "
         "recreate the idea with original assets and verify every material claim."
+    )
+    if policy_risk == "High":
+        takeaway = (
+            "Do not copy the execution. Extract the underlying problem and turn it into an original, "
+            "policy-safe experiment with explicit evidence."
+        )
+
+    return {
+        "evidence_grade": "TRANSCRIPT_REVIEWED" if transcript.get("quality_grade") != "QUESTIONABLE" else "TRANSCRIPT_REVIEWED_WITH_QUALITY_FLAG",
+        "confidence": "HIGH" if transcript.get("quality_grade") != "QUESTIONABLE" else "MEDIUM",
+        "practical_usefulness": usefulness,
+        "evidence_discipline": evidence,
+        "beginner_accessibility": accessibility,
+        "repeatability": repeatability,
+        "originality_safety": originality,
+        "policy_safety": policy_score,
+        "policy_risk": policy_risk,
+        "policy_reasons": reasons,
+        "overall_beginner_rating": overall,
+        "decision": decision,
+        "learning_mode": learning_mode,
+        "claim_evidence_gap": quantified if proof else quantified + len(claims),
+        "claim_evidence_matrix": claim_evidence_matrix,
+        "material_claims_require_independent_verification": bool(claims),
+        "beginner_takeaway": takeaway,
+        "audit_basis": [
+            "public title",
+            "public description",
+            "full transcript analysis",
+            "public performance counters",
+        ],
+        "safety_note": safety_note,
+    }
+
+
+def merge_transcript_records(primary: dict[str, Any] | None, fallback: dict[str, Any] | None) -> dict[str, Any]:
+    """Prefer a successful primary record, otherwise use a browser-derived fallback."""
+    if primary and primary.get("status") == "FULL_TRANSCRIPT_AVAILABLE":
+        return primary
+    if fallback and fallback.get("status") == "FULL_TRANSCRIPT_AVAILABLE":
+        return fallback
+    return primary or fallback or {"status": "NOT_CHECKED"}
