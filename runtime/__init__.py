@@ -1,1 +1,1 @@
-__version__ = "11.2-production"\n
+__version__ = "11.2-production"
