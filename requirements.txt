@@ -1,2 +1,4 @@
 jsonschema>=4.20,<5
 playwright>=1.40,<2
+
+youtube-transcript-api==1.2.4
