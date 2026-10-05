@@ -5,7 +5,7 @@
 **Method:** Live-first, evidence-first, policy-aware, provenance-preserving, adversarial, reproducible  
 **Primary input:** YouTube channel URL / handle / channel ID / unambiguous channel name  
 **Primary output:** complete public-channel intelligence package to the maximum legitimately accessible boundary
-**ChatGPT runtime mode:** 3-input execution — skill file + channel URL + YouTube Data API key
+**ChatGPT runtime mode:** 2-input ChatGPT control + GitHub secret execution — skill file + channel URL; YouTube Data API key is read only from GitHub Actions secret YOUTUBE_API_KEY
 **Execution bundle:** `youtube_channel_deep_audit_v11_2_production/runtime/runner.py` when code execution is available
 
 ---
@@ -38,7 +38,7 @@ At the beginning of the run, identify the three inputs without asking the user t
 ```text
 SKILL_FILE = uploaded .md / skill artifact
 CHANNEL_URL = supplied YouTube channel URL
-YOUTUBE_API_KEY = GitHub Actions secret exposed only to the runtime process
+YOUTUBE_API_KEY = GitHub Actions secret exposed only to the GitHub runner process
 ```
 
 Accept the API key when supplied as plain text, `API_KEY=...`, an environment variable already available to the runtime, or another explicit secret input supported by the execution environment.
@@ -194,9 +194,8 @@ The intended ChatGPT usage is:
 ```text
 [ATTACH THE SKILL FILE]
 CHANNEL URL: https://www.youtube.com/@example
-YOUTUBE DATA API KEY: <your-key>
 
-Run the full audit using the attached skill.
+Run the full audit using the attached skill and the connected GitHub production runtime.
 ```
 
 Do not require the user to understand YouTube API endpoints, channel IDs, playlist IDs, quota mechanics, or the internal audit state machine. The skill/runtime is responsible for resolving and executing them.
