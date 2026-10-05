@@ -103,6 +103,12 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
         if not a:
             issues.append({"path":f"videos[{i}].video_analysis","message":"every discovered video must have an individual audit"})
         original=a.get("original_evidence",{}) or {}
+        audited=a.get("audited_findings", a.get("audited_evidence", {})) or {}
+        guidance=a.get("beginner_guidance", a.get("professional_guidance", {})) or {}
+        if not audited:
+            issues.append({"path":f"videos[{i}].video_analysis.audited_findings","message":"visible AUDITED FINDINGS layer missing"})
+        if not guidance:
+            issues.append({"path":f"videos[{i}].video_analysis.beginner_guidance","message":"visible BEGINNER-FRIENDLY PROFESSIONAL GUIDANCE layer missing"})
         for field in ("video_id","url","title","description","evidence_boundary"):
             if field not in original:
                 issues.append({"path":f"videos[{i}].video_analysis.original_evidence.{field}","message":"original public evidence field missing"})
