@@ -1,7 +1,8 @@
 {
   "channel_url": "https://www.youtube.com/@emmiescalm",
-  "requested_at": "2026-10-05T09:05:00Z",
+  "requested_at": "2026-10-05T09:06:20Z",
   "mode": "DEEP",
   "public_boundary": "maximum legitimately accessible public/API/browser evidence",
-  "api_credential_source": "GitHub Actions secret YOUTUBE_API_KEY"
+  "api_credential_source": "GitHub Actions secret YOUTUBE_API_KEY",
+  "request_id": "emmiescalm-20261005-090620"
 }
