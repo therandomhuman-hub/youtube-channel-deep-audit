@@ -1052,8 +1052,12 @@ def render_html(report: dict[str, Any], path: Path) -> None:
             f"{'generated' if t.get('is_generated') else 'manual/unknown'}"
         )
         claim_html = "".join(
-            f"<li>{html.escape(str(c.get('claim') or c.get('summary') or ''))} — "
-            f"<b>{html.escape(str(c.get('status','')))}</b></li>"
+            f"<li><b>{html.escape(str(c.get('claim') or c.get('summary') or ''))}</b> — "
+            f"<b>{html.escape(str(c.get('status','')))}</b>"
+            f" · verification: {html.escape(str(c.get('verification_state') or 'NOT_INDEPENDENTLY_VERIFIED'))}"
+            f" · evidence: {html.escape(str(c.get('evidence_strength') or 'DIRECT_CREATOR_STATEMENT'))}"
+            f" · independent verification required"
+            f"<br><span class='small'>Needed: {html.escape('; '.join(c.get('evidence_requirements', [])))}</span></li>"
             for c in claims
         ) or "<li>No transcript/title claim pattern extracted.</li>"
         blind = "".join(f"<li>{html.escape(str(x))}</li>" for x in a.get("blind_spots", []))
@@ -1079,6 +1083,7 @@ def render_html(report: dict[str, Any], path: Path) -> None:
             f"<b>policy risk {html.escape(str(a.get('policy_risk','')))}</b></p>"
             f"<p><b>Transcript audit:</b> {transcript_line}</p>"
             f"<p><b>Transcript SHA-256:</b> {html.escape(str(t.get('transcript_sha256') or '—'))}</p>"
+            f"<p><b>Transcript sanity:</b> {html.escape(json.dumps(t.get('transcript_sanity', {}), ensure_ascii=False))}</p>"
             f"<div class='two'><section><h3>Claims</h3><ul>{claim_html}</ul></section>"
             f"<section><h3>Policy / safety</h3><p>{html.escape(reasons)}</p>"
             f"<p><b>Claim-evidence gap:</b> {a.get('claim_evidence_gap','—')}</p></section></div>"
@@ -1258,6 +1263,7 @@ def write_artifacts(out: Path, report: dict[str, Any], comments: list[dict[str, 
             f"- Scores: usefulness {a.get('practical_usefulness')}/10; evidence discipline {a.get('evidence_discipline')}/10; beginner accessibility {a.get('beginner_accessibility')}/10; repeatability {a.get('repeatability')}/10; originality safety {a.get('originality_safety')}/10; policy safety {a.get('policy_safety')}/10; policy risk {a.get('policy_risk')}",
             f"- Claim-evidence gap: {a.get('claim_evidence_gap')}",
             f"- Claim treatment: {json.dumps(a.get('claims', []), ensure_ascii=False)}",
+            f"- Claim/evidence matrix: {json.dumps(a.get('claim_evidence_matrix', []), ensure_ascii=False)}",
             f"- Workflow: {json.dumps(a.get('workflow', {}), ensure_ascii=False)}",
             f"- Blind spots: {'; '.join(a.get('blind_spots', []))}",
             f"- Beginner takeaway: {a.get('beginner_takeaway')}",
