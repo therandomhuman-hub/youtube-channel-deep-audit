@@ -4,10 +4,10 @@ ROOT=Path(__file__).resolve().parents[1]
 SCRIPT=ROOT/"runtime"/"request.py"
 
 class RequestTests(unittest.TestCase):
-    def run(self, body):
+    def execute(self, body):
         return subprocess.run([sys.executable,str(SCRIPT),"--issue-body",body],text=True,capture_output=True)
     def test_handle(self):
-        r=self.run("CHANNEL URL: https://www.youtube.com/@emmiescalm")
+        r=self.execute("CHANNEL URL: https://www.youtube.com/@emmiescalm")
         self.assertEqual(r.returncode,0)
         self.assertIn("@emmiescalm",r.stdout)
     def test_video_rejected(self):
