@@ -499,8 +499,24 @@ def comment_keyword_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def _youtube_player_response(page: Any) -> dict[str, Any] | None:
-    """Extract ytInitialPlayerResponse from a public YouTube watch page."""
-    scripts = page.locator("script").all_text_contents()
+    """Extract YouTube player response from the live page context, then inline scripts."""
+    try:
+        value = page.evaluate("() => window.ytInitialPlayerResponse || null")
+        if isinstance(value, dict):
+            return value
+    except Exception:
+        pass
+    try:
+        page.wait_for_function("() => !!window.ytInitialPlayerResponse", timeout=15000)
+        value = page.evaluate("() => window.ytInitialPlayerResponse || null")
+        if isinstance(value, dict):
+            return value
+    except Exception:
+        pass
+    try:
+        scripts = page.locator("script").all_text_contents()
+    except Exception:
+        return None
     decoder = json.JSONDecoder()
     for text_value in scripts:
         if "ytInitialPlayerResponse" not in text_value:
@@ -517,8 +533,6 @@ def _youtube_player_response(page: Any) -> dict[str, Any] | None:
                 return obj
         except Exception:
             continue
-    # Some pages expose the response in a script object under ytInitialData.
-    # Do not guess caption tracks from arbitrary text.
     return None
 
 
@@ -549,17 +563,34 @@ def _public_caption_track(page: Any, video_id: str) -> dict[str, Any] | None:
 
     base_url = track["baseUrl"]
     try:
-        response_obj = page.request.get(base_url, timeout=30000)
-        body = response_obj.body().decode("utf-8", errors="replace")
+        body = page.evaluate(
+            """async (url) => {
+                const suffixes = [
+                    (url.includes('?') ? '&' : '?') + 'fmt=json3',
+                    (url.includes('?') ? '&' : '?') + 'fmt=srv3',
+                    ''
+                ];
+                for (const suffix of suffixes) {
+                    try {
+                        const res = await fetch(url + suffix, {credentials: 'include'});
+                        const text = await res.text();
+                        if (text && text.trim().length) return text;
+                    } catch (_) {}
+                }
+                return '';
+            }""",
+            base_url,
+        )
     except Exception:
+        body = ""
+    if not body:
         return None
 
     snippets = []
     if body.lstrip().startswith("{"):
         try:
             payload = json.loads(body)
-            events = payload.get("events", [])
-            for event in events:
+            for event in payload.get("events", []):
                 segs = event.get("segs") or []
                 text = "".join(str(seg.get("utf8", "")) for seg in segs).strip()
                 if text:
@@ -570,6 +601,7 @@ def _public_caption_track(page: Any, video_id: str) -> dict[str, Any] | None:
                     })
         except Exception:
             snippets = []
+
     if not snippets:
         try:
             import xml.etree.ElementTree as ET
@@ -615,6 +647,7 @@ def _public_caption_track(page: Any, video_id: str) -> dict[str, Any] | None:
         ],
         "_snippets": snippets,
     }
+
 
 def browser_collect(
     channel_url: str,
@@ -724,96 +757,91 @@ def browser_collect(
                     )
                     page.wait_for_timeout(700)
 
-                    # YouTube's 2026 transcript UI places the transcript control
-                    # in the expanded description and renders segments under the
-                    # searchable-transcript engagement panel.
-                    try:
-                        expand = page.locator("#expand")
-                        if expand.count():
-                            expand.first.click(timeout=5000)
-                            page.wait_for_timeout(300)
-                    except Exception:
-                        pass
+                    transcript_result = page.evaluate(
+                        """async () => {
+                            const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                            const selectors = [
+                              'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] .segment-text',
+                              'transcript-segment-view-model .yt-core-attributed-string',
+                              'ytd-transcript-segment-list-renderer .segment-text',
+                              '#segments-container .segment-text',
+                              '#segments-container yt-formatted-string'
+                            ];
+                            const textOf = (el) => (el?.innerText || el?.textContent || '').trim();
 
-                    transcript_selectors = [
-                        'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] .segment-text',
-                        'transcript-segment-view-model .yt-core-attributed-string',
-                        'ytd-transcript-segment-list-renderer .segment-text',
-                        '#segments-container .segment-text',
-                        '#segments-container yt-formatted-string',
-                    ]
-                    segment_locator = None
-                    for selector in transcript_selectors:
-                        loc = page.locator(selector)
-                        if loc.count():
-                            segment_locator = loc
-                            break
+                            try {
+                              const expand = document.querySelector('ytd-text-inline-expander #expand') || document.querySelector('#expand');
+                              if (expand) expand.click();
+                            } catch (_) {}
 
-                    if segment_locator is None:
-                        button_selectors = [
-                            'button[aria-label="Show transcript" i]',
-                            'ytd-video-description-transcript-section-renderer button',
-                        ]
-                        button = None
-                        for selector in button_selectors:
-                            loc = page.locator(selector)
-                            if loc.count():
-                                button = loc.first
-                                break
-                        if button is None:
-                            scopes = page.locator(
-                                "ytd-video-description-transcript-section-renderer, "
-                                "#structured-description, ytd-watch-metadata"
-                            )
-                            count = scopes.count()
-                            for j in range(count):
-                                loc = scopes.nth(j).locator("button, tp-yt-paper-button").filter(
-                                    has_text=re.compile(r"transcript", re.I)
-                                )
-                                if loc.count():
-                                    button = loc.first
-                                    break
-                        if button is not None:
-                            button.click(timeout=10000)
-                            page.wait_for_timeout(1000)
+                            const getSegments = () => {
+                              for (const sel of selectors) {
+                                const got = [...document.querySelectorAll(sel)]
+                                  .map(textOf).filter(Boolean);
+                                if (got.length) return got;
+                              }
+                              return [];
+                            };
 
-                        for selector in transcript_selectors:
-                            loc = page.locator(selector)
-                            if loc.count():
-                                segment_locator = loc
-                                break
+                            let got = getSegments();
+                            if (got.length) return got;
 
-                    if segment_locator is not None:
-                        texts = segment_locator.evaluate_all(
-                            "els => els.map(e => (e.innerText || e.textContent || '').trim()).filter(Boolean)"
-                        )
-                        segments = [{"text": t, "start": 0, "duration": 0} for t in texts if t]
-                        if segments:
-                            item = make_transcript_record(
-                                vid,
-                                segments,
-                                source="YOUTUBE_PUBLIC_TRANSCRIPT_UI",
-                            )
-                            item["captured_at"] = utc_now()
-                            result["transcripts"].append(item)
-                            continue
+                            const findButton = () => {
+                              const direct = document.querySelector('button[aria-label="Show transcript" i]');
+                              if (direct) return direct;
+                              const scopes = document.querySelectorAll(
+                                'ytd-video-description-transcript-section-renderer, #structured-description, ytd-watch-metadata'
+                              );
+                              for (const scope of scopes) {
+                                const buttons = scope.querySelectorAll('button, tp-yt-paper-button');
+                                for (const b of buttons) {
+                                  const label = (b.textContent || '') + ' ' + (b.getAttribute('aria-label') || '');
+                                  if (/transcript/i.test(label)) return b;
+                                }
+                              }
+                              for (const b of document.querySelectorAll('button, tp-yt-paper-button')) {
+                                if (/^show transcript$/i.test((b.textContent || '').trim())) return b;
+                              }
+                              return null;
+                            };
 
-                    # First-party caption tracks embedded in the public player response.
-                    cap = _public_caption_track(page, vid)
-                    if cap:
-                        snippets = cap.pop("_snippets")
+                            const button = findButton();
+                            if (button) {
+                              button.click();
+                              for (let i = 0; i < 24; i++) {
+                                await sleep(400);
+                                got = getSegments();
+                                if (got.length) return got;
+                              }
+                            }
+                            return [];
+                        }"""
+                    )
+
+                    if isinstance(transcript_result, list) and transcript_result:
+                        segments = [{"text": t, "start": 0, "duration": 0} for t in transcript_result]
                         item = make_transcript_record(
                             vid,
-                            snippets,
-                            source=cap.pop("source", "YOUTUBE_PUBLIC_CAPTION_TRACK"),
-                            language=cap.pop("language", None),
-                            language_code=cap.pop("language_code", None),
-                            is_generated=cap.pop("is_generated", None),
+                            segments,
+                            source="YOUTUBE_PUBLIC_TRANSCRIPT_UI",
                         )
-                        item.update(cap)
                         item["captured_at"] = utc_now()
                     else:
-                        item["status"] = "NOT_DETECTED"
+                        cap = _public_caption_track(page, vid)
+                        if cap:
+                            snippets = cap.pop("_snippets")
+                            item = make_transcript_record(
+                                vid,
+                                snippets,
+                                source=cap.pop("source", "YOUTUBE_PUBLIC_CAPTION_TRACK"),
+                                language=cap.pop("language", None),
+                                language_code=cap.pop("language_code", None),
+                                is_generated=cap.pop("is_generated", None),
+                            )
+                            item.update(cap)
+                            item["captured_at"] = utc_now()
+                        else:
+                            item["status"] = "NOT_DETECTED"
                 except Exception as exc:
                     item["status"] = "UNAVAILABLE"
                     item["error"] = safe_text(exc)[:500]
