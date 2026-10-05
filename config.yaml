@@ -1,4 +1,4 @@
-version: 11.4-production
+version: 11.5-production
 mode: DEEP
 public_only: true
 exhaustive_upload_inventory: true
@@ -16,3 +16,5 @@ transcript_fallback: public_youtube_transcript_ui + public_embed_caption_track
 search_calls_daily_budget: 100
 transcript_exhaustive_default: true
 claim_verification: transcript_proves_statement_only
+transcript_quality_sanity: duration_based_wpm_90_220
+transcript_provider_crosscheck: second_public_provider_when_questionable
