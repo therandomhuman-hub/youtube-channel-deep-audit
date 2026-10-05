@@ -682,7 +682,7 @@ def live_policy_checks() -> list[dict[str, Any]]:
                 record["http_status"] = getattr(resp, "status", 200)
                 record["content_sha256"] = hashlib.sha256(body.encode("utf-8")).hexdigest()
                 title_match = re.search(r"<title[^>]*>(.*?)</title>", body, re.I | re.S)
-                record["page_title"] = re.sub(r"\\s+", " ", html.unescape(title_match.group(1))).strip()[:300] if title_match else None
+                record["page_title"] = re.sub(r"\s+", " ", html.unescape(title_match.group(1))).strip()[:300] if title_match else None
                 low = re.sub(r"<[^>]+>", " ", body).lower()
                 record["matched_keywords"] = [kw for kw in keywords if kw in low]
         except HTTPError as exc:
