@@ -1,11 +1,11 @@
-# YouTube Channel Deep Audit — Production Skill v11.5
+# YouTube Channel Deep Audit — Production Skill v12.0
 ## Canonical Researcher + Verifier + Analyst + Auditor + Decision Engine
 
-**Status:** PRODUCTION-READY CANONICAL SPECIFICATION + EXECUTION CONTRACT + INDIVIDUAL VIDEO EVIDENCE AUDIT  
+**Status:** PRODUCTION-READY CANONICAL SPECIFICATION + EXECUTION CONTRACT + INDIVIDUAL VIDEO EVIDENCE AUDIT + ORIGINAL/AUDIT/BEGINNER REPORT CONTRACT  
 **Method:** Live-first, transcript-first when accessible, evidence-first, policy-aware, provenance-preserving, adversarial, reproducible  
 **Primary input:** YouTube channel URL / handle / channel ID / unambiguous channel name  
 **Primary output:** complete public-channel intelligence package to the maximum legitimately accessible boundary
-**ChatGPT runtime mode:** 2-input ChatGPT control + GitHub secret execution — skill file + channel URL; YouTube Data API key is read only from GitHub Actions secret YOUTUBE_API_KEY
+**ChatGPT runtime mode:** 2-input ChatGPT control + GitHub secret execution + autonomous hourly hardening — skill file + channel URL; YouTube Data API key is read only from GitHub Actions secret YOUTUBE_API_KEY
 **Execution bundle:** repository runtime (`youtube_audit.py` + `runtime/transcript_audit.py`) on GitHub Actions
 
 ---
@@ -1860,6 +1860,80 @@ Optimize for the strongest defensible decision.
 
 ---
 
+# 39A. MANDATORY FINAL-REPORT LAYERING CONTRACT (v12)
+
+The final HTML is a professional decision document, not merely a data dump.
+
+Every discovered video must be represented exactly once in the per-video audit section and must expose three visibly separated layers:
+
+1. **ORIGINAL PUBLIC EVIDENCE**
+   - title
+   - canonical video URL
+   - video ID
+   - publication timestamp
+   - duration
+   - format/type
+   - public views/likes/comments when visible
+   - thumbnail when accessible
+   - original public description
+   - public description resources
+   - explicit evidence boundary
+
+2. **AUDITED FINDINGS**
+   - transcript status and source
+   - transcript hash, word/segment counts and quality sanity
+   - claim inventory and verification state
+   - claim-evidence gaps
+   - workflow reconstruction
+   - usefulness/evidence/accessibility/repeatability/originality/policy scores
+   - policy risk and reasons
+   - confidence
+   - blind spots
+   - source/provenance basis
+
+3. **BEGINNER-FRIENDLY PROFESSIONAL GUIDANCE**
+   - KEEP / TEST / MODIFY / AVOID / RESEARCH MORE
+   - learning mode
+   - what a beginner can safely learn
+   - what a beginner must not assume
+   - concrete boundary conditions
+
+The report must also contain channel-level sections for:
+
+```
+executive summary
+channel/collection coverage
+whole-channel analysis
+recommendations
+risk register
+beginner plan
+transcript coverage
+every-video audit
+sources
+validation
+reproducibility
+self-audit
+```
+
+### Hard release gate
+
+A production release MUST fail if any discovered video lacks:
+
+```
+video_analysis
+original_evidence
+decision
+confidence
+overall_beginner_rating
+transcript status
+```
+
+A video without a usable transcript may still be released, but only as an explicitly low-confidence/metadata-or-partial audit. It must never silently receive a high-confidence content conclusion.
+
+The HTML renderer must make the distinction visible without requiring the reader to inspect raw JSON.
+
+---
+
 # 40. PRODUCTION COMPLETION DEFINITION
 
 The skill is production-ready when:
@@ -1874,6 +1948,10 @@ The skill is production-ready when:
 [PASS] channel metadata contract
 [PASS] playlist and channel-section audit
 [PASS] transcript/caption limitations
+[PASS] mandatory original-evidence layer
+[PASS] mandatory per-video audit release gate
+[PASS] beginner-facing decision layer
+[PASS] complete top-level professional HTML sections
 [PASS] owner-only analytics limitations
 [PASS] current policy verification
 [PASS] evidence classes
