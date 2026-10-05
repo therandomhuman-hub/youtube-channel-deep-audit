@@ -1,32 +1,32 @@
-# YouTube Channel Deep Audit — Production Skill v11.2
+# YouTube Channel Deep Audit — Production Skill v11.3
 ## Canonical Researcher + Verifier + Analyst + Auditor + Decision Engine
 
-**Status:** PRODUCTION-READY CANONICAL SPECIFICATION + EXECUTION CONTRACT  
-**Method:** Live-first, evidence-first, policy-aware, provenance-preserving, adversarial, reproducible  
+**Status:** PRODUCTION-READY CANONICAL SPECIFICATION + EXECUTION CONTRACT + INDIVIDUAL VIDEO EVIDENCE AUDIT  
+**Method:** Live-first, transcript-first when accessible, evidence-first, policy-aware, provenance-preserving, adversarial, reproducible  
 **Primary input:** YouTube channel URL / handle / channel ID / unambiguous channel name  
 **Primary output:** complete public-channel intelligence package to the maximum legitimately accessible boundary
 **ChatGPT runtime mode:** 2-input ChatGPT control + GitHub secret execution — skill file + channel URL; YouTube Data API key is read only from GitHub Actions secret YOUTUBE_API_KEY
-**Execution bundle:** `youtube_channel_deep_audit_v11_2_production/runtime/runner.py` when code execution is available
+**Execution bundle:** repository runtime (`youtube_audit.py` + `runtime/transcript_audit.py`) on GitHub Actions
 
 ---
 
 
-# 0A. CHATGPT 3-INPUT EXECUTION CONTRACT
+# 0A. CHATGPT 2-INPUT EXECUTION CONTRACT
 
-This skill is designed to be used directly in ChatGPT with exactly three runtime inputs:
+This skill is designed to be used directly in ChatGPT with exactly two user inputs plus one server-side secret:
 
 ```text
-INPUT 1 — THIS SKILL FILE
+USER INPUT 1 — THIS SKILL FILE
 The uploaded YouTube Channel Deep Audit skill file.
 Treat the uploaded file as the canonical runtime instruction set for this run.
 Do not silently replace, downgrade, or merge it with older audit versions.
 
-INPUT 2 — CHANNEL URL
+USER INPUT 2 — CHANNEL URL
 One YouTube channel URL to audit.
 Examples: https://www.youtube.com/@channelhandle
           https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx
 
-CREDENTIAL — GITHUB ACTIONS SECRET
+SERVER-SIDE CREDENTIAL — GITHUB ACTIONS SECRET
 The runtime must obtain the YouTube Data API v3 credential only from the GitHub Actions secret named YOUTUBE_API_KEY.
 Never request the raw key from the user through the ChatGPT audit workflow, echo it, publish it, save it, or expose it in any report, citation, artifact, HTML, log, filename, or final response.
 ```
@@ -573,7 +573,125 @@ The YouTube Data API `captions.list` endpoint requires authorization and does no
 
 Never download copyrighted audio/video solely to generate a transcript.
 
-## I. PUBLIC PAGE RESEARCH
+#
+# 4J. MANDATORY INDIVIDUAL-VIDEO EVIDENCE AUDIT (v11.3)
+
+A video with only title/description/metrics is **not** considered fully audited.
+
+For every accessible video, perform this pipeline:
+
+\`\`\`
+VIDEO METADATA
+→ PUBLIC TRANSCRIPT ATTEMPT
+→ TRANSCRIPT HASH / WORD COUNT / LANGUAGE
+→ CLAIM EXTRACTION
+→ CLAIM-EVIDENCE GAP
+→ WORKFLOW RECONSTRUCTION
+→ BEGINNER ACCESSIBILITY
+→ REPEATABILITY
+→ ORIGINALITY / REUSE SIGNALS
+→ CURRENT POLICY RISK
+→ BEGINNER LEARNING SCORE
+→ CONFIDENCE
+→ KEEP / TEST / MODIFY / AVOID
+\`\`\`
+
+### Transcript confidence rules
+
+Use these states:
+
+\`\`\`
+FULL_TRANSCRIPT_AVAILABLE
+PARTIAL_TRANSCRIPT
+NO_TRANSCRIPT_FOUND
+TRANSCRIPTS_DISABLED
+TRANSCRIPT_REQUEST_BLOCKED
+AUTHENTICATION_OR_AGE_RESTRICTED
+DEPENDENCY_UNAVAILABLE
+TRANSCRIPT_FETCH_ERROR
+NOT_ATTEMPTED
+\`\`\`
+
+A transcript being available does **not** make the creator's claims true.
+
+Financial, revenue, profit, subscriber, view, conversion, time-to-result and similar claims remain:
+
+\`\`\`
+CREATOR_REPORTED
+\`\`\`
+
+until independently supported by a separate reliable public source.
+
+### Full transcript retention rule
+
+The runtime may process a full public transcript **in memory** for analysis, but the final artifact must not persist the complete transcript by default.
+
+Persist only:
+
+\`\`\`
+language
+is_generated
+segment_count
+word_count
+duration_seconds
+transcript_sha256
+bounded evidence excerpt (maximum 20 words)
+claim categories / counts
+analysis signals
+\`\`\`
+
+### Required per-video scores
+
+Every video must expose:
+
+\`\`\`
+overall_beginner_rating /10
+practical_usefulness /10
+evidence_discipline /10
+beginner_accessibility /10
+repeatability /10
+originality_safety /10
+policy_safety /10
+policy_risk
+confidence
+decision
+learning_mode
+claim_evidence_gap
+\`\`\`
+
+The overall rating is a learning decision aid, not a statement that the video is correct.
+
+### Metadata-only rule
+
+When no usable transcript is available, the video **must** be marked low confidence.
+
+Do not infer:
+
+\`\`\`
+workflow
+proof quality
+exact teaching steps
+claim truth
+policy safety
+\`\`\`
+
+from title/description alone.
+
+The report must visibly say:
+
+> **Transcript unavailable — metadata-only assessment; do not treat as a complete content audit.**
+
+### Beginner decision semantics
+
+\`\`\`
+KEEP   = strong learning value with acceptable originality/policy risk
+TEST   = potentially useful, but verify claims and reproduce experimentally
+MODIFY = useful core idea but risky framing or unsafe implementation
+AVOID  = material reuse/replication/policy risk makes literal adoption inappropriate
+RESEARCH MORE = transcript/evidence coverage too weak for a reliable decision
+\`\`\`
+
+# I. PUBLIC PAGE RESEARCH
 
 Inspect, where legitimately accessible:
 
