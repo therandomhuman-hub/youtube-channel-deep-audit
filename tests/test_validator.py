@@ -7,9 +7,9 @@ from runtime.validate import validate
 class ValidatorTests(unittest.TestCase):
     def base_report(self):
         return {
-            "metadata":{"input_contract":{"api_key_exposed":False}},
+            "metadata":{"methodology_version":"11.3-production","schema_version":"11.3.0","input_contract":{"api_key_exposed":False}},
             "channel":{},"coverage":{},"access_matrix":[],"snapshots":[],"videos":[{"id":"v1"}],
-            "posts":[],"comments_summary":[],"playlists":[],"channel_sections":[],"transcripts":[],"sources":[{"source_id":"s1","url":"https://example.com","role":"OFFICIAL_REFERENCE","captured_at":"2026-01-01T00:00:00Z"}],
+            "posts":[],"comments_summary":[],"playlists":[],"channel_sections":[],"transcripts":[],"transcript_audit":{"target_video_count":1,"attempted_video_count":0,"full_transcript_count":0,"coverage_percent":0,"full_coverage_percent":0},"sources":[{"source_id":"s1","url":"https://example.com","role":"OFFICIAL_REFERENCE","captured_at":"2026-01-01T00:00:00Z"}],
             "claims":[],"metrics":[],"calculations":[],"risks":[],"hypotheses":[],"experiments":[],"recommendations":[],"benchmarks":[],"knowledge_gaps":[],"deltas":[],"policy_checks":[],
             "decision_queue":{},"validation":{"status":"PARTIAL"},"executive_summary":{},"beginner_plan":{},"analysis":{},"reproducibility":{"credential_exposed":False},"self_audit":{"api_key_exposed":False}
         }
