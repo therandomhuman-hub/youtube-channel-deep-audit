@@ -153,6 +153,22 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
             if scan(txt): issues.append({"path":str(p.relative_to(root)),"message":"secret-like pattern detected"})
 
     doc=(root/"audit.html").read_text(encoding="utf-8",errors="replace")
+    card_count = len(re.findall(r"<details\\b[^>]*class=['\"]video-card['\"]", doc, re.I))
+    if card_count != len(vids):
+        issues.append({"path":"audit.html","message":f"video card count {card_count} does not match discovered video count {len(vids)}"})
+    else:
+        cards = re.findall(r"<details\\b[^>]*class=['\"]video-card['\"][^>]*>(.*?)</details>", doc, re.I | re.S)
+        for i, card in enumerate(cards):
+            plain = re.sub(r"<[^>]+>", " ", card).lower()
+            for needle, label in (
+                ("original public evidence", "ORIGINAL PUBLIC EVIDENCE"),
+                ("audited findings", "AUDITED FINDINGS"),
+                ("beginner-friendly professional guidance", "BEGINNER-FRIENDLY PROFESSIONAL GUIDANCE"),
+            ):
+                if needle not in plain:
+                    issues.append({"path":f"video_cards[{i}]", "message":f"mandatory visible layer missing: {label}"})
+            if "transcript:" not in plain:
+                issues.append({"path":f"video_cards[{i}]", "message":"per-video transcript status is not visibly rendered"})
     hp=HTMLCheck(); hp.feed(doc)
     if not hp.html_lang: issues.append({"path":"audit.html","message":"missing html lang"})
     if hp.h1!=1: issues.append({"path":"audit.html","message":f"expected one H1, found {hp.h1}"})
