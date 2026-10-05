@@ -75,6 +75,8 @@ A partial or blocked collection is never represented as complete.
 `python -m compileall -q runtime youtube_audit.py tests`
 
 ## Transcript-first rule
+The transcript fallback stack also includes clearly labeled public third-party transcript services when YouTube-native extraction is blocked. Their content is treated as third-party public evidence, not official YouTube data, and must never independently verify the creator's claims.
+
 
 The production audit attempts transcript analysis for every discovered video by default. A full transcript allows the system to audit what the creator actually says, but does not verify the truth of creator claims. Revenue, growth, time-to-result and other material claims remain explicitly creator-reported until independently corroborated.
 
