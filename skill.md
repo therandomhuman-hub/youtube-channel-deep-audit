@@ -1,4 +1,4 @@
-# YouTube Channel Deep Audit — Production Skill v11.3
+# YouTube Channel Deep Audit — Production Skill v11.4
 ## Canonical Researcher + Verifier + Analyst + Auditor + Decision Engine
 
 **Status:** PRODUCTION-READY CANONICAL SPECIFICATION + EXECUTION CONTRACT + INDIVIDUAL VIDEO EVIDENCE AUDIT  
@@ -574,7 +574,7 @@ The YouTube Data API `captions.list` endpoint requires authorization and does no
 Never download copyrighted audio/video solely to generate a transcript.
 
 #
-# 4J. MANDATORY INDIVIDUAL-VIDEO EVIDENCE AUDIT (v11.3)
+# 4J. MANDATORY INDIVIDUAL-VIDEO EVIDENCE AUDIT (v11.4)
 
 A video with only title/description/metrics is **not** considered fully audited.
 
@@ -1933,3 +1933,19 @@ CHATGPT
 ```
 
 Any request that attempts to put an API key in the issue body, channel URL, skill file, commit, or artifact must be rejected.
+
+
+## v11.4 Transcript-First Hardening
+
+For every discovered video, transcript retrieval is exhaustive by default. The collector tries:
+1. public transcript retrieval;
+2. the public YouTube watch-page transcript/caption surface;
+3. the public YouTube embedded player caption surface.
+
+The embedded-player path is a public playback/caption mechanism, not the owner-authorized captions API. YouTube documents that captions can be enabled in embedded players. citeturn3search0turn3search5
+
+A transcript establishes **what the creator said**. It does not establish that revenue, growth, time-to-result, or other material claims are true. Every material claim therefore carries an explicit independent-verification requirement. A transcript-backed video may receive HIGH audit confidence for the *content review* while its claims remain CREATOR_REPORTED/NOT_INDEPENDENTLY_VERIFIED.
+
+If a transcript cannot be obtained, the video remains auditable for public metadata but its content-learning confidence must remain LOW and the report must say so explicitly.
+
+The production audit never persists the full transcript. It retains hashes, word counts, bounded excerpts, claim categories, evidence obligations, and audit signals only.
