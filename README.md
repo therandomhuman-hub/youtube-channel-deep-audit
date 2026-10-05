@@ -1,6 +1,6 @@
 # YouTube Channel Deep Audit
 
-Production GitHub Actions execution layer for the canonical v11.2 audit skill.
+Production GitHub Actions execution layer for the canonical v11.3 audit skill.
 
 ## One-time setup
 
@@ -41,7 +41,10 @@ The runtime collects to the legitimately accessible public boundary:
 - public comments and separately paginated replies
 - public Shorts surface
 - public Posts surface
-- transcript availability metadata through public UI where available
+- transcript evidence audit for every targeted video using public transcript retrieval plus public UI fallback
+- compact transcript hashes/word counts/claim signals only; full transcript text is processed in memory and not persisted
+- per-video beginner scores for usefulness, evidence discipline, accessibility, repeatability, originality safety and policy safety
+- explicit claim-evidence gaps and low-confidence metadata-only states when transcripts are unavailable
 - public description/resource links
 - reproducibility/quota/coverage records
 - standalone interactive HTML
@@ -60,6 +63,8 @@ A run is released only when the collector and validator succeed and the generate
 - CSV reconciliation
 - artifact hash validation
 - credential exposure checks
+- transcript coverage / confidence consistency
+- per-video rating bounds and full-transcript requirement for high-confidence ratings
 
 A partial or blocked collection is never represented as complete.
 
