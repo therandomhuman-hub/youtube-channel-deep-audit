@@ -41,7 +41,7 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          python -c 'import json; from pathlib import Path; p=json.loads(Path(".audit/request.json").read_text(encoding="utf-8")); raise SystemExit(3) if p.get("status") == "consumed" else None; print("CHANNEL URL:", p["channel_url"])' > /tmp/request_body.txt
+          python -c 'import json; from pathlib import Path; p=json.loads(Path(".audit/request.json").read_text(encoding="utf-8")); print("CHANNEL URL:", p["channel_url"]) if p.get("status") != "consumed" else (_ for _ in ()).throw(SystemExit(3))' > /tmp/request_body.txt
           echo "run=true" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
