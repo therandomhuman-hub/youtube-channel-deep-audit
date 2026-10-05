@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 API_ROOT = "https://www.googleapis.com/youtube/v3"
-UA = "YouTubeChannelDeepAudit/11.4-production"
+UA = "YouTubeChannelDeepAudit/11.5-production"
 
 # Google currently documents 1-unit costs for these read methods; search.list has
 # a separate 100-calls/day bucket and each call costs 1 unit in that bucket.
@@ -202,6 +202,17 @@ def classify_http(code: int, reason: str | None) -> str:
         return "UPSTREAM_ERROR"
     return "HTTP_ERROR"
 
+
+def parse_iso_duration_seconds(value: str | None) -> float | None:
+    if not value or not isinstance(value, str):
+        return None
+    m = re.fullmatch(r'PT(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+(?:\\.\\d+)?)S)?', value)
+    if not m:
+        return None
+    h = float(m.group(1) or 0)
+    mins = float(m.group(2) or 0)
+    secs = float(m.group(3) or 0)
+    return h * 3600 + mins * 60 + secs
 
 def extract_channel_ref(value: str) -> tuple[str, str]:
     value = value.strip()
@@ -1172,7 +1183,7 @@ def write_artifacts(out: Path, report: dict[str, Any], comments: list[dict[str, 
         raise RuntimeError("Canonical schema.json is missing from the repository.")
 
     (out / "config.yaml").write_text(
-        "version: 11.4-production\nmode: DEEP\npublic_only: true\n"
+        "version: 11.5-production\nmode: DEEP\npublic_only: true\n"
         "credential_source: GITHUB_ACTIONS:YOUTUBE_API_KEY\n"
         "transcript_engine: youtube-transcript-api+public-ui+public-embed-caption-fallback\n"
         "transcript_full_text_persisted: false\n",
@@ -1272,7 +1283,7 @@ def write_artifacts(out: Path, report: dict[str, Any], comments: list[dict[str, 
     (out / "video_analysis.md").write_text("\n".join(lines), encoding="utf-8")
     render_html(report, out / "audit.html")
 
-    manifest = {"schema_version": "11.4.0", "generated_at": utc_now(), "files": {}}
+    manifest = {"schema_version": "11.5.0", "generated_at": utc_now(), "files": {}}
     for p in sorted(out.iterdir()):
         if p.is_file() and p.name not in {"release_manifest.json", "checkpoint.json"}:
             manifest["files"][p.name] = sha256_file(p)
@@ -1411,7 +1422,9 @@ def run(args: argparse.Namespace) -> int:
     for vid in transcript_target_ids:
         record = transcript_cache.get(vid)
         if not record or record.get("status") in {"TRANSCRIPT_FETCH_ERROR", "TRANSCRIPT_REQUEST_BLOCKED", "NETWORK_ERROR"}:
-            transcript_cache[vid] = audit_video_transcript(vid)
+            video_for_duration = next((x for x in videos if x.get("id") == vid), {})
+            expected_duration_seconds = parse_iso_duration_seconds((video_for_duration.get("contentDetails") or {}).get("duration"))
+            transcript_cache[vid] = audit_video_transcript(vid, expected_duration_seconds=expected_duration_seconds)
             checkpoint.set("transcript_audits", transcript_cache)
             time.sleep(0.25)
 
