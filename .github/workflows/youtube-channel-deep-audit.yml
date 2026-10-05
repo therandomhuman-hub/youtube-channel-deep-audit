@@ -81,12 +81,7 @@ jobs:
           mkdir -p audit
           if [[ "${{ github.event_name }}" == "push" ]]; then
             test -f .audit/request.json
-            python - <<'PY' > audit/request_body.txt
-import json
-from pathlib import Path
-payload = json.loads(Path(".audit/request.json").read_text(encoding="utf-8"))
-print("CHANNEL URL:", payload["channel_url"])
-PY
+            python -c 'import json; from pathlib import Path; print("CHANNEL URL:", json.loads(Path(".audit/request.json").read_text(encoding="utf-8"))["channel_url"])' > audit/request_body.txt
             python runtime/request.py --issue-body "$(cat audit/request_body.txt)" > audit/channel_url.txt
           else
             python runtime/request.py \
