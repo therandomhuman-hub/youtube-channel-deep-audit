@@ -409,7 +409,9 @@ def extract_claims_from_title(title: str) -> list[dict[str, Any]]:
             "status": "OBSERVED",
             "verification": "Directly observed in public title.",
         })
-    return claims\n\ndef per_video_analysis(video: dict[str, Any], comment_rows: list[dict[str, Any]], transcript: dict[str, Any]) -> dict[str, Any]:
+    return claims
+
+def per_video_analysis(video: dict[str, Any], comment_rows: list[dict[str, Any]], transcript: dict[str, Any]) -> dict[str, Any]:
     title = video.get("snippet", {}).get("title", "") or ""
     desc = video.get("snippet", {}).get("description", "") or ""
     stats = video.get("statistics", {}) or {}
@@ -487,7 +489,9 @@ def extract_claims_from_title(title: str) -> list[dict[str, Any]]:
         "workflow": workflow,
         "beginner_takeaway": learning.get("beginner_takeaway"),
         "analysis_basis": learning.get("audit_basis", []) + ["public comments when available"],
-    }\n\ndef comment_keyword_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
+    }
+
+def comment_keyword_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
     blob = " ".join(str(x.get("text","")) for x in rows).lower()
     terms = ["great","helpful","thanks","scam","works","doesn't work","expensive","link","tutorial","ai","youtube"]
     return {term: blob.count(term) for term in terms}
@@ -632,7 +636,9 @@ def browser_collect(
     except Exception as exc:
         result["status"] = "PLAYWRIGHT_ERROR"
         result["limitations"].append(safe_text(exc)[:500])
-    return result\n\ndef progressive_scroll(page: Any, max_scrolls: int) -> None:
+    return result
+
+def progressive_scroll(page: Any, max_scrolls: int) -> None:
     previous=-1; stable=0
     for _ in range(max_scrolls):
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
