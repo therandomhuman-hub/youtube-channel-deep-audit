@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from runtime.youtube_audit import METHOD_COSTS, SEARCH_CALL_BUDGET, Quota, Checkpoint, extract_channel_ref, plausible_key
+from runtime.transcript_audit import make_transcript_record, audit_learning
 
 class RuntimeTests(unittest.TestCase):
     def test_quota_costs(self):
@@ -24,6 +25,48 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(plausible_key("A"*30))
         self.assertFalse(plausible_key("short"))
         self.assertFalse(plausible_key("A"*30+" "))
+
+
+    def test_transcript_record_is_bounded(self):
+        rec = make_transcript_record(
+            "abc123456",
+            [{"text":"I made $10,000 in 30 days. First, create the channel, then publish original videos.", "start":0, "duration":4}],
+            source="TEST",
+            language="English",
+            language_code="en",
+            is_generated=False,
+        )
+        self.assertEqual(rec["text_retained"], False)
+        self.assertTrue(rec["transcript_sha256"])
+        self.assertGreaterEqual(rec["claim_count"], 1)
+        self.assertLessEqual(len(rec["bounded_excerpt"].split()), 20)
+
+    def test_transcript_score_requires_full_transcript_for_high_confidence(self):
+        partial = audit_learning(
+            title="How I made $10K",
+            description="",
+            transcript={"status":"NO_TRANSCRIPT_FOUND"},
+        )
+        self.assertEqual(partial["confidence"], "LOW")
+        self.assertNotEqual(partial["decision"], "KEEP")
+
+    def test_full_transcript_learning_audit_has_individual_scores(self):
+        rec = make_transcript_record(
+            "abc123456",
+            [{"text":"First set up the channel. Then test three original videos and measure analytics. I show the dashboard and the date range.", "start":0, "duration":6}],
+            source="TEST",
+            language="English",
+            language_code="en",
+            is_generated=True,
+        )
+        audit = audit_learning(title="Full system", description="", transcript=rec)
+        for key in [
+            "overall_beginner_rating","practical_usefulness","evidence_discipline",
+            "beginner_accessibility","repeatability","originality_safety","policy_safety",
+            "policy_risk","confidence","decision","learning_mode","claim_evidence_gap"
+        ]:
+            self.assertIn(key, audit)
+        self.assertEqual(audit["confidence"], "HIGH")
 
     def test_quota_persistence(self):
         with tempfile.TemporaryDirectory() as d:
