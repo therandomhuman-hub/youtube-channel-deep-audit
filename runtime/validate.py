@@ -68,7 +68,7 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
     else:
         warnings.append({"path":"schema","message":"jsonschema unavailable; semantic schema validation skipped"})
 
-    required_fields=["metadata","channel","coverage","access_matrix","snapshots","videos","posts","comments_summary","playlists","channel_sections","transcripts","sources","claims","metrics","calculations","risks","hypotheses","experiments","recommendations","benchmarks","knowledge_gaps","deltas","policy_checks","decision_queue","validation","executive_summary","beginner_plan","analysis","reproducibility","self_audit"]
+    required_fields=["metadata","channel","coverage","access_matrix","snapshots","videos","posts","comments_summary","playlists","channel_sections","transcripts","transcript_audit","sources","claims","metrics","calculations","risks","hypotheses","experiments","recommendations","benchmarks","knowledge_gaps","deltas","policy_checks","decision_queue","validation","executive_summary","beginner_plan","analysis","reproducibility","self_audit"]
     for f in required_fields:
         if f not in report: issues.append({"path":f,"message":"required report field missing"})
     if report.get("metadata",{}).get("input_contract",{}).get("api_key_exposed") is not False:
@@ -83,6 +83,24 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
         issues.append({"path":"validation.status","message":"claims complete collection while inventory or video details are partial"})
 
     vids=[v.get("id") for v in report.get("videos",[]) if isinstance(v,dict)]
+    transcript_audit=report.get("transcript_audit",{})
+    if transcript_audit.get("target_video_count") not in (None,len(vids)):
+        issues.append({"path":"transcript_audit.target_video_count","message":"does not match video count"})
+    full_count=transcript_audit.get("full_transcript_count")
+    if isinstance(full_count,(int,float)) and (full_count<0 or full_count>len(vids)):
+        issues.append({"path":"transcript_audit.full_transcript_count","message":"invalid full transcript count"})
+    for i,v in enumerate(report.get("videos",[])):
+        if not isinstance(v,dict):
+            continue
+        t=v.get("transcript_audit",{}) or {}
+        if t.get("text_retained") is not False:
+            issues.append({"path":f"videos[{i}].transcript_audit.text_retained","message":"full transcript text must not be persisted"})
+        a=v.get("video_analysis",{}) or {}
+        rating=a.get("overall_beginner_rating")
+        if rating is not None and (not isinstance(rating,(int,float)) or not 0<=rating<=10):
+            issues.append({"path":f"videos[{i}].video_analysis.overall_beginner_rating","message":"must be between 0 and 10"})
+        if a.get("confidence")=="HIGH" and t.get("status")!="FULL_TRANSCRIPT_AVAILABLE":
+            issues.append({"path":f"videos[{i}].video_analysis.confidence","message":"HIGH confidence requires a full usable transcript"})
     if len(vids)!=len(set(vids)): issues.append({"path":"videos","message":"duplicate video IDs"})
     source_ids={s.get("source_id") for s in report.get("sources",[]) if isinstance(s,dict)}
     for i,c in enumerate(report.get("claims",[])):
