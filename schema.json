@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "youtube-channel-deep-audit-v11.2.schema.json",
+  "title": "YouTube Channel Deep Audit v11.2 Production Report",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "metadata","channel","coverage","access_matrix","snapshots","videos","posts",
+    "comments_summary","playlists","channel_sections","transcripts","sources","claims",
+    "metrics","calculations","risks","hypotheses","experiments","recommendations","benchmarks",
+    "knowledge_gaps","deltas","policy_checks","decision_queue","validation","executive_summary",
+    "beginner_plan","reproducibility","self_audit"
+  ],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["methodology_version","schema_version","input_contract"],
+      "properties": {
+        "methodology_version": {"type":"string"},
+        "schema_version": {"type":"string"},
+        "canonical_channel_url": {"type":"string","format":"uri"},
+        "started_at": {"type":"string"},
+        "completed_at": {"type":"string"},
+        "input_contract": {
+          "type":"object",
+          "required":["api_key_present","api_key_exposed"],
+          "properties":{
+            "skill_file_present":{"type":"boolean"},
+            "channel_url_present":{"type":"boolean"},
+            "api_key_present":{"type":"boolean"},
+            "api_key_exposed":{"const":false}
+          },
+          "additionalProperties":true
+        }
+      },
+      "additionalProperties":true
+    },
+    "channel":{"type":"object"},
+    "channel_id":{"type":"string"},
+    "coverage":{"type":"object"},
+    "access_matrix":{"type":"array","items":{"type":"object","required":["surface","mode","status"],"additionalProperties":true}},
+    "snapshots":{"type":"array","items":{"type":"object"}},
+    "videos":{
+      "type":"array",
+      "items":{
+        "type":"object",
+        "required":["id"],
+        "properties":{
+          "id":{"type":"string","pattern":"^[A-Za-z0-9_-]{6,}$"},
+          "snippet":{"type":"object"},
+          "statistics":{"type":"object"},
+          "contentDetails":{"type":"object"}
+        },
+        "additionalProperties":true
+      }
+    },
+    "posts":{"type":"array","items":{"type":"object"}},
+    "comments_summary":{"type":"array","items":{"type":"object"}},
+    "playlists":{"type":"array","items":{"type":"object"}},
+    "channel_sections":{"type":"array","items":{"type":"object"}},
+    "transcripts":{"type":"array","items":{"type":"object"}},
+    "sources":{
+      "type":"array",
+      "items":{
+        "type":"object",
+        "required":["source_id","url","role"],
+        "properties":{
+          "source_id":{"type":"string"},
+          "url":{"type":"string","format":"uri"},
+          "role":{"type":"string"}
+        },
+        "additionalProperties":true
+      }
+    },
+    "claims":{
+      "type":"array",
+      "items":{
+        "type":"object",
+        "required":["status","evidence_ids"],
+        "properties":{
+          "status":{"enum":["VERIFIED","CREATOR_REPORTED","OBSERVED","INFERRED","UNVERIFIED","CONTRADICTED","WITHDRAWN"]},
+          "evidence_ids":{"type":"array","items":{"type":"string"}}
+        },
+        "additionalProperties":true
+      }
+    },
+    "metrics":{
+      "type":"array",
+      "items":{
+        "type":"object",
+        "required":["status"],
+        "properties":{"status":{"enum":["OBSERVED","DERIVED","ESTIMATED","REPORTED","UNAVAILABLE"]}},
+        "additionalProperties":true
+      }
+    },
+    "calculations":{"type":"array","items":{"type":"object"}},
+    "risks":{"type":"array","items":{"type":"object"}},
+    "hypotheses":{"type":"array","items":{"type":"object"}},
+    "experiments":{"type":"array","items":{"type":"object"}},
+    "recommendations":{"type":"array","items":{"type":"object"}},
+    "benchmarks":{"type":"array","items":{"type":"object"}},
+    "knowledge_gaps":{"type":"array","items":{"type":"object"}},
+    "deltas":{"type":"array","items":{"type":"object"}},
+    "policy_checks":{"type":"array","items":{"type":"object"}},
+    "decision_queue":{"type":"object"},
+    "validation":{"type":"object","required":["status"],"properties":{"status":{"type":"string"}},"additionalProperties":true},
+    "executive_summary":{"type":"object"},
+    "beginner_plan":{"type":"object"},
+    "analysis":{"type":"object"},
+    "reproducibility":{"type":"object","properties":{"credential_exposed":{"const":false}},"additionalProperties":true},
+    "self_audit":{"type":"object"}
+  }
+}
