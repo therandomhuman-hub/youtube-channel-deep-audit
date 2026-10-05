@@ -277,13 +277,14 @@ def _fetch_public_hosted_transcript(video_id: str, languages: Iterable[str]) -> 
     ]
     for name, url, kind in candidates:
         try:
-            req = Request(url, headers={"Accept": "application/json,text/plain;q=0.9,*/*;q=0.8", "User-Agent": "YouTubeChannelDeepAudit/11.4-public-transcript-fallback"})
+            req = Request(url, headers={"Accept": "application/json,text/plain;q=0.9,*/*;q=0.8", "User-Agent": "YouTubeChannelDeepAudit/11.5-public-transcript-fallback"})
             with urlopen(req, timeout=20) as resp:
                 raw = resp.read(4_000_000)
                 body = raw.decode("utf-8", errors="replace")
                 payload = json.loads(body) if kind == 'json' else body
                 record = _hosted_transcript_record(video_id, payload, source_url=url, source_name=name)
                 if record:
+                    record = _apply_transcript_sanity(record, expected_duration_seconds)
                     record["source_class"] = "THIRD_PARTY_PUBLIC"
                     record["independent_verification"] = "NOT_PERFORMED"
                     record["provider"] = name
@@ -294,7 +295,26 @@ def _fetch_public_hosted_transcript(video_id: str, languages: Iterable[str]) -> 
             continue
     return None
 
-def audit_video_transcript(video_id: str, languages: Iterable[str] = DEFAULT_LANGUAGES) -> dict[str, Any]:
+
+def _apply_transcript_sanity(record: dict[str, Any], expected_duration_seconds: float | None) -> dict[str, Any]:
+    if record.get('status') != 'FULL_TRANSCRIPT_AVAILABLE' or not expected_duration_seconds:
+        return record
+    words = int(record.get('word_count') or 0)
+    if not words:
+        return record
+    wpm = words / (float(expected_duration_seconds) / 60.0)
+    record['transcript_sanity'] = {
+        'words_per_minute': round(wpm, 1),
+        'plausible': 90 <= wpm <= 220,
+        'expected_duration_seconds': round(float(expected_duration_seconds), 2),
+        'rule': 'Broad completeness sanity check only; it does not prove transcript accuracy.'
+    }
+    record['quality_grade'] = 'PLAUSIBLE' if 90 <= wpm <= 220 else 'QUESTIONABLE'
+    if record['quality_grade'] == 'QUESTIONABLE':
+        record['quality_warning'] = 'Transcript word density is outside the broad 90–220 wpm sanity band.'
+    return record
+
+def audit_video_transcript(video_id: str, languages: Iterable[str] = DEFAULT_LANGUAGES, expected_duration_seconds: float | None = None) -> dict[str, Any]:
     base = {
         "video_id": video_id,
         "status": "NOT_ATTEMPTED",
@@ -347,10 +367,10 @@ def audit_video_transcript(video_id: str, languages: Iterable[str] = DEFAULT_LAN
             is_generated=getattr(chosen, "is_generated", None),
         )
         record["available_tracks"] = available
-        return record
+        return _apply_transcript_sanity(record, expected_duration_seconds)
     except Exception as exc:
         base.update({"status": _exception_status(exc), "error": _safe_error(exc)})
-        hosted = _fetch_public_hosted_transcript(video_id, languages)
+        hosted = _fetch_public_hosted_transcript(video_id, languages, expected_duration_seconds)
         if hosted:
             hosted["fallback_after"] = base.get("status")
             return hosted
@@ -403,6 +423,7 @@ def audit_learning(
     status = transcript.get("status", "")
     full = status == "FULL_TRANSCRIPT_AVAILABLE"
     words = int(transcript.get("word_count", 0) or 0)
+    transcript_quality = transcript.get("quality_grade") or "UNKNOWN"
     proof = int(transcript.get("proof_signal_count", 0) or 0)
     process = int(transcript.get("process_signal_count", 0) or 0)
     replication = int(transcript.get("replication_risk_signal_count", 0) or 0)
@@ -518,45 +539,3 @@ def audit_learning(
     takeaway = (
         "Use the transcript to learn the problem, mechanism, steps and measurement logic; "
         "recreate the idea with original assets and verify every material claim."
-    )
-    if policy_risk == "High":
-        takeaway = (
-            "Do not copy the execution. Extract the underlying problem and turn it into an original, "
-            "policy-safe experiment with explicit evidence."
-        )
-
-    return {
-        "evidence_grade": "TRANSCRIPT_REVIEWED",
-        "confidence": "HIGH",
-        "practical_usefulness": usefulness,
-        "evidence_discipline": evidence,
-        "beginner_accessibility": accessibility,
-        "repeatability": repeatability,
-        "originality_safety": originality,
-        "policy_safety": policy_score,
-        "policy_risk": policy_risk,
-        "policy_reasons": reasons,
-        "overall_beginner_rating": overall,
-        "decision": decision,
-        "learning_mode": learning_mode,
-        "claim_evidence_gap": quantified if proof else quantified + len(claims),
-        "claim_evidence_matrix": claim_evidence_matrix,
-        "material_claims_require_independent_verification": bool(claims),
-        "beginner_takeaway": takeaway,
-        "audit_basis": [
-            "public title",
-            "public description",
-            "full transcript analysis",
-            "public performance counters",
-        ],
-        "safety_note": safety_note,
-    }
-
-
-def merge_transcript_records(primary: dict[str, Any] | None, fallback: dict[str, Any] | None) -> dict[str, Any]:
-    """Prefer a successful primary record, otherwise use a browser-derived fallback."""
-    if primary and primary.get("status") == "FULL_TRANSCRIPT_AVAILABLE":
-        return primary
-    if fallback and fallback.get("status") == "FULL_TRANSCRIPT_AVAILABLE":
-        return fallback
-    return primary or fallback or {"status": "NOT_CHECKED"}
