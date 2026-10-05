@@ -1,6 +1,6 @@
 # YouTube Channel Deep Audit
 
-Production GitHub Actions execution layer for the canonical v11.4 audit skill.
+Production GitHub Actions execution layer for the canonical v11.5 audit skill.
 
 ## One-time setup
 
@@ -92,3 +92,8 @@ Each video receives separate:
 When a transcript is unavailable, the video cannot receive HIGH content-audit confidence and the report must clearly label the limitation.
 
 The transcript engine uses the public transcript surface, the public watch-page caption surface, and a public YouTube embedded-player caption fallback. YouTube documents caption support in embedded players.
+
+
+### Transcript quality control
+
+Retrieved transcripts are checked against the video's duration. Implausible word density triggers a second public transcript provider; unresolved quality issues are explicitly downgraded rather than hidden.
