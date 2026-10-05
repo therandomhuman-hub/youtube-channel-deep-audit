@@ -1324,8 +1324,8 @@ def run(args: argparse.Namespace) -> int:
         report = {
             "metadata": {
                 "audit_id": "blocked",
-                "methodology_version": "11.4-production",
-                "schema_version": "11.4.0",
+                "methodology_version": "11.5-production",
+                "schema_version": "11.5.0",
                 "started_at": started,
                 "completed_at": utc_now(),
                 "canonical_channel_url": args.channel,
@@ -1579,8 +1579,8 @@ def run(args: argparse.Namespace) -> int:
     report = {
         "metadata": {
             "audit_id": f"{channel_id}-{captured.replace(':','').replace('+00:00','Z')}",
-            "methodology_version": "11.4-production",
-            "schema_version": "11.4.0",
+            "methodology_version": "11.5-production",
+            "schema_version": "11.5.0",
             "started_at": started,
             "completed_at": captured,
             "canonical_channel_url": canonical,
@@ -1658,7 +1658,7 @@ def run(args: argparse.Namespace) -> int:
             "transcript_audit": transcript_report,
         },
         "reproducibility": {
-            "collector_version": "11.4-production",
+            "collector_version": "11.5-production",
             "transcript_engine": "youtube-transcript-api 1.2.x + public transcript UI fallback",
             "skill_sha256": sha256_file(skill),
             "credential_present": True,
