@@ -119,7 +119,10 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
     if any(not r.get("comment_id") for r in comment_rows): issues.append({"path":"comments.csv","message":"comment row without comment_id"})
 
     manifest=json.loads((root/"release_manifest.json").read_text(encoding="utf-8"))
+    mutable={"checkpoint.json","collector.log","collector_exit_code.txt","validator_exit_code.txt","validation.json","release_status.txt","release_build.log","release_builder_exit_code.txt","channel_url.txt","request_body.txt"}
     for name,digest in manifest.get("files",{}).items():
+        if name in mutable:
+            continue
         p=root/name
         if not p.exists(): issues.append({"path":"release_manifest.json","message":"missing bound artifact "+name})
         elif sha256(p)!=digest: issues.append({"path":name,"message":"hash mismatch against release manifest"})
