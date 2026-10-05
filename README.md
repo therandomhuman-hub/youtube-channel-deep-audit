@@ -1,6 +1,6 @@
 # YouTube Channel Deep Audit
 
-Production GitHub Actions execution layer for the canonical v11.3 audit skill.
+Production GitHub Actions execution layer for the canonical v11.4 audit skill.
 
 ## One-time setup
 
@@ -41,7 +41,7 @@ The runtime collects to the legitimately accessible public boundary:
 - public comments and separately paginated replies
 - public Shorts surface
 - public Posts surface
-- transcript evidence audit for every targeted video using public transcript retrieval plus public UI fallback
+- transcript evidence audit for every targeted video using public transcript retrieval plus public UI and embedded-player caption fallback
 - compact transcript hashes/word counts/claim signals only; full transcript text is processed in memory and not persisted
 - per-video beginner scores for usefulness, evidence discipline, accessibility, repeatability, originality safety and policy safety
 - explicit claim-evidence gaps and low-confidence metadata-only states when transcripts are unavailable
@@ -73,3 +73,20 @@ A partial or blocked collection is never represented as complete.
 `python -m unittest discover -s tests -v`
 
 `python -m compileall -q runtime youtube_audit.py tests`
+
+## Transcript-first rule
+
+The production audit attempts transcript analysis for every discovered video by default. A full transcript allows the system to audit what the creator actually says, but does not verify the truth of creator claims. Revenue, growth, time-to-result and other material claims remain explicitly creator-reported until independently corroborated.
+
+Each video receives separate:
+- learning-value scores;
+- evidence-discipline score;
+- beginner-accessibility score;
+- repeatability score;
+- originality/policy safety score;
+- claim/evidence matrix;
+- confidence and decision (`KEEP`, `TEST`, `MODIFY`, `AVOID`, or `RESEARCH MORE`).
+
+When a transcript is unavailable, the video cannot receive HIGH content-audit confidence and the report must clearly label the limitation.
+
+The transcript engine uses the public transcript surface, the public watch-page caption surface, and a public YouTube embedded-player caption fallback. YouTube documents caption support in embedded players.
