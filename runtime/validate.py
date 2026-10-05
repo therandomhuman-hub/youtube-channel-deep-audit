@@ -99,6 +99,18 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
         t=v.get("transcript_audit",{}) or {}
         if t.get("text_retained") is not False:
             issues.append({"path":f"videos[{i}].transcript_audit.text_retained","message":"full transcript text must not be persisted"})
+        transcript_status=t.get("status") or v.get("transcript_status")
+        allowed_transcript_statuses={
+            "FULL_TRANSCRIPT_AVAILABLE","PARTIAL_TRANSCRIPT","NO_TRANSCRIPT_FOUND",
+            "TRANSCRIPTS_DISABLED","TRANSCRIPT_REQUEST_BLOCKED",
+            "AUTHENTICATION_OR_AGE_RESTRICTED","DEPENDENCY_UNAVAILABLE",
+            "TRANSCRIPT_FETCH_ERROR","NOT_ATTEMPTED","TRANSCRIPT_PANEL_NO_SEGMENTS",
+            "VIDEO_UNAVAILABLE"
+        }
+        if transcript_status not in allowed_transcript_statuses:
+            issues.append({"path":f"videos[{i}].transcript_audit.status","message":"every discovered video requires an explicit transcript/caption attempt status"})
+        if transcript_status == "NOT_ATTEMPTED":
+            issues.append({"path":f"videos[{i}].transcript_audit.status","message":"transcript/caption attempt is mandatory for every discovered video"})
         a=v.get("video_analysis",{}) or {}
         if not a:
             issues.append({"path":f"videos[{i}].video_analysis","message":"every discovered video must have an individual audit"})
