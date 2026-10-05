@@ -13,6 +13,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from runtime.transcript_audit import audit_video_transcript, audit_learning, make_transcript_record, merge_transcript_records
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -389,71 +391,123 @@ def performance_metrics(videos: list[dict[str, Any]]) -> dict[str, Any]:
 def extract_claims_from_title(title: str) -> list[dict[str, Any]]:
     claims = []
     text = title or ""
-    for value in re.findall(r"\\$\\s?[\\d,.]+(?:K|M|k|m)?(?:/month|/mo)?", text):
-        claims.append({"claim": f"Title presents outcome/revenue figure: {value}", "status": "CREATOR_REPORTED", "verification": "not independently verified by public API metadata"})
-    for value, unit in re.findall(r"(?:in|within|over)\\s+(\\d+)\\s+(hours?|days?|weeks?|months?)", text, re.I):
-        claims.append({"claim": f"Title presents time-to-result claim: {value} {unit}", "status": "CREATOR_REPORTED", "verification": "not independently verified by public API metadata"})
-    if re.search(r"\\b(copy|only|secret|guaranteed|monetized|1\\.8 billion|800m|2m subscriber)\\b", text, re.I):
-        claims.append({"claim": "Title uses strong replication/exclusivity/result framing", "status": "OBSERVED", "verification": "directly observed in public title"})
-    return claims
-
-
-def per_video_analysis(video: dict[str, Any], comment_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    for value in re.findall(r"\$\s?[\d,.]+(?:K|M|k|m|B|b)?(?:/month|/mo)?", text):
+        claims.append({
+            "claim": f"Title presents outcome/revenue figure: {value}",
+            "status": "CREATOR_REPORTED",
+            "verification": "Creator headline claim; public API counters do not verify revenue or profit.",
+        })
+    for value, unit in re.findall(r"(?:in|within|over|under|after)\s+(\d+)\s+(hours?|days?|weeks?|months?|years?)", text, re.I):
+        claims.append({
+            "claim": f"Title presents time-to-result claim: {value} {unit}",
+            "status": "CREATOR_REPORTED",
+            "verification": "Creator headline claim; time-to-result requires case-specific evidence.",
+        })
+    if re.search(r"\b(copy|only|secret|guaranteed|monetized|billion|million|subscriber)\b", text, re.I):
+        claims.append({
+            "claim": "Title uses strong replication, exclusivity, scale or result framing.",
+            "status": "OBSERVED",
+            "verification": "Directly observed in public title.",
+        })
+    return claims\n\ndef per_video_analysis(video: dict[str, Any], comment_rows: list[dict[str, Any]], transcript: dict[str, Any]) -> dict[str, Any]:
     title = video.get("snippet", {}).get("title", "") or ""
     desc = video.get("snippet", {}).get("description", "") or ""
-    low = title.lower()
     stats = video.get("statistics", {}) or {}
-    try: views = int(stats.get("viewCount", 0) or 0)
-    except Exception: views = 0
+    try:
+        views = int(stats.get("viewCount", 0) or 0)
+    except Exception:
+        views = 0
+
     rows = [r for r in comment_rows if r.get("video_id") == video.get("id")]
     ctext = " ".join(str(r.get("text", "")) for r in rows).lower()
-    beginner_signals = sum(bool(re.search(p, low)) for p in [r"how i", r"full course", r"full system", r"system", r"guide", r"breakdown", r"tutorial", r"how to"])
-    usefulness = min(10, 5 + min(4, beginner_signals // 2))
-    evidence = min(10, 4 + (1 if rows else 0) + (2 if video.get("transcript_status") in {"PUBLIC_TRANSCRIPT_AVAILABLE", "FULL_TRANSCRIPT_AVAILABLE"} else 0))
-    accessibility = min(10, 6 + min(3, beginner_signals))
-    repeatability = min(10, 5 + (2 if any(x in low for x in ["system", "workflow", "full course", "how i", "breakdown"]) else 0))
-    originality = 4 if "copy" in low else 7
-    if any(x in low for x in ["automation", "ai video", "ai videos", "mass"]): originality = max(1, originality - 1)
-    risks = []
-    if any(x in low for x in ["copy", "monetized in", "only", "secret", "guaranteed"]): risks.append("high-certainty or replication framing")
-    if "$" in title: risks.append("large outcome/result claim")
-    if any(x in low for x in ["ai", "automation", "faceless"]): risks.append("AI/faceless/automation monetization risk needs policy-aware implementation")
-    policy_risk = "High" if "copy" in low else ("Medium" if risks else "Low")
-    decision = "MODIFY" if policy_risk == "High" else ("KEEP" if usefulness >= 7 and evidence >= 5 and originality >= 6 else "TEST")
+    learning = audit_learning(title=title, description=desc, transcript=transcript)
+    title_claims = extract_claims_from_title(title)
+    transcript_claims = transcript.get("claims", []) if isinstance(transcript, dict) else []
+
     resources = resource_hints(desc)
-    tools = sorted(set(re.findall(r"\\b(?:ChatGPT|Claude|Gemini|Canva|CapCut|VidIQ|TubeBuddy|Gumroad|WhatsApp|Instagram|Facebook|YouTube|TikTok)\\b", title + " " + desc, re.I)))
+    tools = sorted(set(re.findall(
+        r"\b(?:ChatGPT|Claude|Gemini|Canva|CapCut|VidIQ|TubeBuddy|Gumroad|WhatsApp|Instagram|Facebook|YouTube|TikTok|Veo|Sora|Runway|ElevenLabs)\b",
+        title + " " + desc,
+        re.I,
+    )))
+
     workflow = {
-        "input": "Audience problem / creator outcome inferred from public title and description",
-        "research": "Not directly observable from metadata; transcript unavailable/not detected in this run",
-        "decision": "Chosen strategy/case-study framing visible in public title/description",
-        "production": "Not directly observable from public metadata",
-        "packaging": "Outcome + platform/problem + mechanism/time + system/course/copy framing",
-        "publishing": "Public upload observed",
-        "measurement": "Public views/likes/comments observed; private CTR/retention unavailable",
-        "monetization": "Public product/affiliate/resource links where present; conversion/revenue not verified",
+        "input": "Audience problem or creator outcome, analyzed from title, description and transcript when available.",
+        "research": "Transcript-derived process signals and public resource links; private research process remains unavailable.",
+        "decision": "Strategy, mechanism and offer framing reconstructed from transcript rather than inferred from title alone.",
+        "production": "Production steps reported in transcript are assessed for specificity; private labor/costs remain unavailable.",
+        "packaging": "Outcome + platform/problem + mechanism/time + system/course/case-study framing.",
+        "publishing": "Public upload metadata observed.",
+        "measurement": "Public views/likes/comments observed; private CTR, retention, impressions and watch time unavailable.",
+        "monetization": "Public product/resource links observed where present; conversion, revenue and profit are not independently verified.",
     }
-    blind_spots = ["Private analytics (CTR, retention, impressions, watch time) unavailable", "Failure rate and unsuccessful experiments not observable", "True costs, labor, profit and conversion rates not established"]
-    if video.get("transcript_status") == "NOT_DETECTED": blind_spots.append("Transcript-level workflow and claim verification unavailable")
-    if not resources: blind_spots.append("No classified outbound resource signal in description")
-    themes = [x for x in ["how","help","niche","prompt","tool","views","start","free","works"] if x in ctext]
+
+    blind_spots = [
+        "Private analytics (CTR, retention, impressions, watch time) unavailable.",
+        "Failure rate and unsuccessful experiments are not observable from a public audit.",
+        "True costs, labor, conversion rates, refunds and profit are not established.",
+    ]
+    if transcript.get("status") != "FULL_TRANSCRIPT_AVAILABLE":
+        blind_spots.append("Transcript-level claim/workflow audit is incomplete for this video.")
+    if learning.get("claim_evidence_gap", 0) > 0:
+        blind_spots.append("Material creator-reported claims remain unverified unless independently supported by a public source.")
+    if not resources:
+        blind_spots.append("No classified outbound resource signal was found in the public description.")
+
+    themes = [x for x in ["help", "niche", "prompt", "tool", "views", "start", "free", "works"] if x in ctext]
+    public_evidence = {
+        "views_observed": views,
+        "likes_observed": stats.get("likeCount"),
+        "comments_observed": stats.get("commentCount"),
+        "comment_rows_collected": len(rows),
+        "description_resource_count": len(resources),
+    }
+
+    combined_claims = []
+    combined_claims.extend(title_claims)
+    for c in transcript_claims:
+        combined_claims.append({
+            "claim": c.get("summary"),
+            "status": c.get("status", "CREATOR_REPORTED"),
+            "verification": c.get("verification"),
+            "categories": c.get("categories", []),
+            "source": transcript.get("source"),
+        })
+
     return {
-        "practical_usefulness": usefulness, "evidence_quality": evidence, "beginner_accessibility": accessibility,
-        "repeatability": repeatability, "originality_safety": originality, "policy_risk": policy_risk, "decision": decision,
-        "claims": extract_claims_from_title(title), "workflow": workflow, "tools": tools, "resources": resources,
-        "comment_evidence": {"comment_count": len(rows), "themes": themes}, "blind_spots": blind_spots,
-        "beginner_takeaway": "Study the audience problem, mechanism and evidence; reproduce the learning with original execution." if decision in {"KEEP","TEST"} else "Do not copy the framing literally; convert it into an original, evidence-bounded case study.",
-        "analysis_basis": ["public metadata", "public description/resource links", "public performance counters", "public comments when available", "transcript status"],
-    }
-
-
-def comment_keyword_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
+        **learning,
+        "claims": combined_claims[:20],
+        "title_claim_count": len(title_claims),
+        "transcript_claim_count": len(transcript_claims),
+        "tools": tools,
+        "resources": resources,
+        "comment_evidence": {"comment_count": len(rows), "themes": themes},
+        "public_evidence": public_evidence,
+        "blind_spots": blind_spots,
+        "workflow": workflow,
+        "beginner_takeaway": learning.get("beginner_takeaway"),
+        "analysis_basis": learning.get("audit_basis", []) + ["public comments when available"],
+    }\n\ndef comment_keyword_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
     blob = " ".join(str(x.get("text","")) for x in rows).lower()
     terms = ["great","helpful","thanks","scam","works","doesn't work","expensive","link","tutorial","ai","youtube"]
     return {term: blob.count(term) for term in terms}
 
 
-def browser_collect(channel_url: str, video_ids: list[str], transcript_limit: int, max_scrolls: int) -> dict[str, Any]:
-    result = {"status":"PLAYWRIGHT_UNAVAILABLE","shorts":[],"posts":[],"transcripts":[],"surface_checks":[],"limitations":[]}
+def browser_collect(
+    channel_url: str,
+    video_ids: list[str],
+    transcript_limit: int,
+    max_scrolls: int,
+    transcript_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    result = {
+        "status": "PLAYWRIGHT_UNAVAILABLE",
+        "shorts": [],
+        "posts": [],
+        "transcripts": [],
+        "surface_checks": [],
+        "limitations": [],
+    }
     try:
         from playwright.sync_api import sync_playwright
     except Exception:
@@ -462,72 +516,123 @@ def browser_collect(channel_url: str, video_ids: list[str], transcript_limit: in
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
-            page = browser.new_page(viewport={"width":1440,"height":1000})
+            page = browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(30000)
             base = channel_url.rstrip("/")
-            for suffix in ["/","/videos","/shorts","/live","/playlists","/posts"]:
+
+            for suffix in ["/", "/videos", "/shorts", "/live", "/playlists", "/posts"]:
                 try:
-                    page.goto(base+suffix, wait_until="domcontentloaded")
-                    result["surface_checks"].append({"surface":suffix,"status":"OK","captured_at":utc_now()})
+                    page.goto(base + suffix, wait_until="domcontentloaded")
+                    result["surface_checks"].append({
+                        "surface": suffix,
+                        "status": "OK",
+                        "captured_at": utc_now(),
+                    })
                 except Exception as exc:
-                    result["surface_checks"].append({"surface":suffix,"status":"UNAVAILABLE","error":safe_text(exc)[:500],"captured_at":utc_now()})
+                    result["surface_checks"].append({
+                        "surface": suffix,
+                        "status": "UNAVAILABLE",
+                        "error": safe_text(exc)[:500],
+                        "captured_at": utc_now(),
+                    })
+
             try:
-                page.goto(base+"/shorts", wait_until="domcontentloaded")
-                progressive_scroll(page,max_scrolls)
-                hrefs=page.locator('a[href*="/shorts/"]').evaluate_all("els => els.map(e => e.href).filter(Boolean)")
-                seen=set()
-                for pos, href in enumerate(hrefs,1):
-                    m=re.search(r"/shorts/([A-Za-z0-9_-]{6,})",href)
+                page.goto(base + "/shorts", wait_until="domcontentloaded")
+                progressive_scroll(page, max_scrolls)
+                hrefs = page.locator('a[href*="/shorts/"]').evaluate_all(
+                    "els => els.map(e => e.href).filter(Boolean)"
+                )
+                seen = set()
+                for pos, href in enumerate(hrefs, 1):
+                    m = re.search(r"/shorts/([A-Za-z0-9_-]{6,})", href)
                     if m and m.group(1) not in seen:
-                        seen.add(m.group(1)); result["shorts"].append({"video_id":m.group(1),"position":pos,"captured_at":utc_now()})
+                        seen.add(m.group(1))
+                        result["shorts"].append({
+                            "video_id": m.group(1),
+                            "position": pos,
+                            "captured_at": utc_now(),
+                        })
             except Exception as exc:
-                result["limitations"].append("Shorts: "+safe_text(exc)[:500])
+                result["limitations"].append("Shorts: " + safe_text(exc)[:500])
+
             try:
-                page.goto(base+"/posts", wait_until="domcontentloaded")
-                progressive_scroll(page,max_scrolls)
-                anchors=page.locator('a[href*="/post/"]').evaluate_all("(els) => els.map((e) => ({href: e.href, text: (e.innerText || e.textContent || '').trim()}))")
-                seen=set()
+                page.goto(base + "/posts", wait_until="domcontentloaded")
+                progressive_scroll(page, max_scrolls)
+                anchors = page.locator('a[href*="/post/"]').evaluate_all(
+                    "(els) => els.map((e) => ({href: e.href, text: (e.innerText || e.textContent || '').trim()}))"
+                )
+                seen = set()
                 for a in anchors:
-                    href=a.get("href","")
-                    m=re.search(r"/post/([^?#/]+)",href)
+                    href = a.get("href", "")
+                    m = re.search(r"/post/([^?#/]+)", href)
                     if not m or m.group(1) in seen:
                         continue
                     seen.add(m.group(1))
-                    preview=a.get("text","")[:1200]
+                    preview = a.get("text", "")[:1200]
                     try:
-                        loc=page.locator(f'a[href*="/post/{m.group(1)}"]').first
-                        card=loc.locator("xpath=ancestor::*[self::ytd-rich-item-renderer or self::ytd-backstage-post-thread-renderer][1]")
-                        preview=re.sub(r"\s+"," ",card.inner_text(timeout=3000)).strip()[:1200]
+                        loc = page.locator(f'a[href*="/post/{m.group(1)}"]').first
+                        card = loc.locator(
+                            "xpath=ancestor::*[self::ytd-rich-item-renderer or self::ytd-backstage-post-thread-renderer][1]"
+                        )
+                        preview = re.sub(r"\s+", " ", card.inner_text(timeout=3000)).strip()[:1200]
                     except Exception:
                         pass
-                    result["posts"].append({"post_id":m.group(1),"url":href,"text_preview":preview,"captured_at":utc_now()})
+                    result["posts"].append({
+                        "post_id": m.group(1),
+                        "url": href,
+                        "text_preview": preview,
+                        "captured_at": utc_now(),
+                    })
             except Exception as exc:
-                result["limitations"].append("Posts: "+safe_text(exc)[:500])
-            for vid in video_ids[:max(0,transcript_limit)]:
-                item={"video_id":vid,"status":"UNKNOWN","captured_at":utc_now(),"text_retained":False}
+                result["limitations"].append("Posts: " + safe_text(exc)[:500])
+
+            ids = transcript_ids if transcript_ids is not None else video_ids[:max(0, transcript_limit)]
+            for vid in ids:
+                item = {
+                    "video_id": vid,
+                    "status": "UNKNOWN",
+                    "captured_at": utc_now(),
+                    "text_retained": False,
+                }
                 try:
-                    page.goto(f"https://www.youtube.com/watch?v={vid}",wait_until="domcontentloaded")
-                    buttons=page.locator('button[aria-label*="transcript" i], tp-yt-paper-button[aria-label*="transcript" i]')
-                    if buttons.count()==0:
-                        item["status"]="NOT_DETECTED"
+                    page.goto(f"https://www.youtube.com/watch?v={vid}", wait_until="domcontentloaded")
+                    buttons = page.locator(
+                        'button[aria-label*="transcript" i], '
+                        'tp-yt-paper-button[aria-label*="transcript" i], '
+                        'ytd-video-description-transcript-section-renderer button'
+                    )
+                    if buttons.count() == 0:
+                        item["status"] = "NOT_DETECTED"
                     else:
-                        buttons.first.click(); page.wait_for_timeout(750)
-                        n=page.locator("ytd-transcript-segment-renderer").count()
-                        item["status"]="PUBLIC_TRANSCRIPT_AVAILABLE" if n else "TRANSCRIPT_PANEL_NO_SEGMENTS"
-                        item["segment_count"]=n
+                        buttons.first.click()
+                        page.wait_for_timeout(750)
+                        segments = page.locator("ytd-transcript-segment-renderer").evaluate_all(
+                            "els => els.map(e => ({"
+                            "text: (e.innerText || e.textContent || '').trim(),"
+                            "start: parseFloat((e.querySelector('.segment-timestamp')?.innerText || '0').replace(/[^0-9:.]/g,'')) || 0,"
+                            "duration: 0"
+                            "}))"
+                        )
+                        if segments:
+                            item = make_transcript_record(
+                                vid,
+                                segments,
+                                source="YOUTUBE_PUBLIC_TRANSCRIPT_UI",
+                            )
+                            item["captured_at"] = utc_now()
+                        else:
+                            item["status"] = "TRANSCRIPT_PANEL_NO_SEGMENTS"
                 except Exception as exc:
-                    item["status"]="UNAVAILABLE"; item["error"]=safe_text(exc)[:500]
+                    item["status"] = "UNAVAILABLE"
+                    item["error"] = safe_text(exc)[:500]
                 result["transcripts"].append(item)
+
             browser.close()
-        result["status"]="SUCCESS"
-        if transcript_limit < len(video_ids):
-            result["limitations"].append(f"Transcript availability checked for {transcript_limit} of {len(video_ids)} videos.")
+        result["status"] = "SUCCESS"
     except Exception as exc:
-        result["status"]="PLAYWRIGHT_ERROR"; result["limitations"].append(safe_text(exc)[:500])
-    return result
-
-
-def progressive_scroll(page: Any, max_scrolls: int) -> None:
+        result["status"] = "PLAYWRIGHT_ERROR"
+        result["limitations"].append(safe_text(exc)[:500])
+    return result\n\ndef progressive_scroll(page: Any, max_scrolls: int) -> None:
     previous=-1; stable=0
     for _ in range(max_scrolls):
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -541,180 +646,338 @@ def progressive_scroll(page: Any, max_scrolls: int) -> None:
         previous=height
 
 
-def source_register() -> list[dict[str,str]]:
-    urls={
-        "SRC-YT-CHANNELS":"https://developers.google.com/youtube/v3/docs/channels",
-        "SRC-YT-PLAYLISTITEMS":"https://developers.google.com/youtube/v3/docs/playlistItems/list",
-        "SRC-YT-VIDEOS":"https://developers.google.com/youtube/v3/docs/videos/list",
-        "SRC-YT-PLAYLISTS":"https://developers.google.com/youtube/v3/docs/playlists/list",
-        "SRC-YT-SECTIONS":"https://developers.google.com/youtube/v3/docs/channelSections/list",
-        "SRC-YT-COMMENTTHREADS":"https://developers.google.com/youtube/v3/docs/commentThreads/list",
-        "SRC-YT-COMMENTS":"https://developers.google.com/youtube/v3/docs/comments/list",
-        "SRC-YT-CAPTIONS":"https://developers.google.com/youtube/v3/docs/captions/list",
-        "SRC-YT-ANALYTICS":"https://developers.google.com/youtube/analytics/reference",
-        "SRC-YT-QUOTA":"https://developers.google.com/youtube/v3/determine_quota_cost",
-        "SRC-YT-SHORTS":"https://support.google.com/youtube/answer/15424877",
-        "SRC-YT-POSTS":"https://support.google.com/youtube/answer/9409631",
-        "SRC-YT-VIEWS":"https://developers.google.com/youtube/v3/docs/videos",
+def source_register(video_ids: list[str] | None = None, transcript_map: dict[str, dict[str, Any]] | None = None) -> list[dict[str, str]]:
+    urls = {
+        "SRC-YT-CHANNELS": "https://developers.google.com/youtube/v3/docs/channels",
+        "SRC-YT-PLAYLISTITEMS": "https://developers.google.com/youtube/v3/docs/playlistItems/list",
+        "SRC-YT-VIDEOS": "https://developers.google.com/youtube/v3/docs/videos/list",
+        "SRC-YT-PLAYLISTS": "https://developers.google.com/youtube/v3/docs/playlists/list",
+        "SRC-YT-SECTIONS": "https://developers.google.com/youtube/v3/docs/channelSections/list",
+        "SRC-YT-COMMENTTHREADS": "https://developers.google.com/youtube/v3/docs/commentThreads/list",
+        "SRC-YT-COMMENTS": "https://developers.google.com/youtube/v3/docs/comments/list",
+        "SRC-YT-CAPTIONS": "https://developers.google.com/youtube/v3/docs/captions/list",
+        "SRC-YT-ANALYTICS": "https://developers.google.com/youtube/analytics/reference",
+        "SRC-YT-QUOTA": "https://developers.google.com/youtube/v3/determine_quota_cost",
+        "SRC-YT-SHORTS": "https://support.google.com/youtube/answer/15424877",
+        "SRC-YT-POSTS": "https://support.google.com/youtube/answer/9409631",
+        "SRC-YT-MONETIZATION": "https://support.google.com/youtube/answer/1311392",
+        "SRC-YT-PAID-PROMOTIONS": "https://support.google.com/youtube/answer/154235",
+        "SRC-YT-AI-DISCLOSURE": "https://support.google.com/youtube/answer/14328491",
     }
-    now=utc_now()
-    return [{"source_id":k,"url":v,"role":"OFFICIAL_REFERENCE","captured_at":now} for k,v in urls.items()]
+    now = utc_now()
+    rows = [
+        {
+            "source_id": k,
+            "url": v,
+            "role": "OFFICIAL_REFERENCE",
+            "captured_at": now,
+        }
+        for k, v in urls.items()
+    ]
+    for vid in video_ids or []:
+        rows.append({
+            "source_id": f"VIDEO-{vid}",
+            "url": f"https://www.youtube.com/watch?v={vid}",
+            "role": "PUBLIC_VIDEO_PAGE",
+            "captured_at": now,
+        })
+        t = (transcript_map or {}).get(vid) or {}
+        if t.get("status") == "FULL_TRANSCRIPT_AVAILABLE":
+            rows.append({
+                "source_id": f"TRANSCRIPT-{vid}",
+                "url": t.get("source_url") or f"https://www.youtube.com/watch?v={vid}",
+                "role": "PUBLIC_TRANSCRIPT_EVIDENCE",
+                "captured_at": t.get("captured_at") or now,
+            })
+    return rows
 
 
-def render_html(report: dict[str,Any], path: Path) -> None:
-    channel=report.get("channel",{})
-    title=channel.get("snippet",{}).get("title") or "YouTube Channel Deep Audit"
-    videos=report.get("videos",[])
-    perf=report.get("analysis",{}).get("performance",{})
-    data=json.dumps({"videos":videos},ensure_ascii=False).replace("<","\\u003c").replace("</script","<\\/script")
-    cards=[]
-    for i,v in enumerate(videos,1):
-        sn=v.get("snippet",{}); st=v.get("statistics",{}); hints=v.get("_audit_hints",{}); a=v.get("video_analysis",{})
-        claims=json.dumps(a.get("claims",[]),ensure_ascii=False,indent=2)[:5000]
-        workflow=json.dumps(a.get("workflow",{}),ensure_ascii=False,indent=2)[:5000]
-        blind="\\n".join(a.get("blind_spots",[]))[:3000]
-        cards.append(
-            "<details class='video-card'><summary><strong>#%d</strong> %s</summary>"
-            "<div class='cardgrid'><div><b>Published</b><br>%s</div><div><b>Views</b><br>%s</div><div><b>Likes</b><br>%s</div>"
-            "<div><b>Comments</b><br>%s</div><div><b>Type</b><br>%s</div><div><b>Transcript</b><br>%s</div></div>"
-            "<p><b>Decision:</b> %s</p><p><b>Scores:</b> usefulness %s/10 · evidence %s/10 · beginner %s/10 · repeatability %s/10 · originality %s/10 · policy risk %s</p>"
-            "<div class='two'><div><b>Claims</b><pre>%s</pre></div><div><b>Workflow</b><pre>%s</pre></div></div>"
-            "<div class='two'><div><b>Blind spots</b><pre>%s</pre></div><div><b>Beginner takeaway</b><p>%s</p></div></div>"
-            "<p><b>Tools:</b> %s</p><p><b>Resources:</b> %s</p><p><b>Comment evidence:</b> %s</p>"
-            "<p><a href='https://www.youtube.com/watch?v=%s' target='_blank' rel='noreferrer noopener'>Open video</a></p></details>"
-            % (i,html.escape(sn.get("title","")),html.escape(str(sn.get("publishedAt","—"))),html.escape(str(st.get("viewCount","—"))),
-               html.escape(str(st.get("likeCount","—"))),html.escape(str(st.get("commentCount","—"))),html.escape(str(v.get("content_type","UNKNOWN"))),
-               html.escape(str(v.get("transcript_status","NOT_CHECKED"))),html.escape(str(a.get("decision","TEST"))),
-               html.escape(str(a.get("practical_usefulness","—"))),html.escape(str(a.get("evidence_quality","—"))),
-               html.escape(str(a.get("beginner_accessibility","—"))),html.escape(str(a.get("repeatability","—"))),
-               html.escape(str(a.get("originality_safety","—"))),html.escape(str(a.get("policy_risk","—"))),
-               html.escape(claims),html.escape(workflow),html.escape(blind),html.escape(a.get("beginner_takeaway","")),
-               html.escape(", ".join(a.get("tools",[])) or "none detected"),
-               html.escape(json.dumps(a.get("resources",[]),ensure_ascii=False)[:1800]),
-               html.escape(json.dumps(a.get("comment_evidence",{}),ensure_ascii=False)),
-               html.escape(v.get("id","")))
+def transcript_summary(transcripts: dict[str, dict[str, Any]], total_videos: int) -> dict[str, Any]:
+    records = list(transcripts.values())
+    full = sum(1 for x in records if x.get("status") == "FULL_TRANSCRIPT_AVAILABLE")
+    partial = sum(1 for x in records if x.get("status") not in {"FULL_TRANSCRIPT_AVAILABLE", "NO_TRANSCRIPT_FOUND", "TRANSCRIPTS_DISABLED", "VIDEO_UNAVAILABLE", "TRANSCRIPT_REQUEST_BLOCKED", "AUTHENTICATION_OR_AGE_RESTRICTED", "DEPENDENCY_UNAVAILABLE", "TRANSCRIPT_FETCH_ERROR"} and x.get("status"))
+    unavailable = sum(1 for x in records if x.get("status") in {
+        "NO_TRANSCRIPT_FOUND", "TRANSCRIPTS_DISABLED", "VIDEO_UNAVAILABLE",
+        "TRANSCRIPT_REQUEST_BLOCKED", "AUTHENTICATION_OR_AGE_RESTRICTED",
+        "DEPENDENCY_UNAVAILABLE", "TRANSCRIPT_FETCH_ERROR",
+    })
+    not_attempted = max(0, total_videos - len(records))
+    return {
+        "target_video_count": total_videos,
+        "attempted_video_count": len(records),
+        "full_transcript_count": full,
+        "partial_or_panel_count": partial,
+        "unavailable_count": unavailable,
+        "not_attempted_count": not_attempted,
+        "coverage_percent": round((len(records) / total_videos) * 100, 1) if total_videos else 0,
+        "full_coverage_percent": round((full / total_videos) * 100, 1) if total_videos else 0,
+        "rule": "Transcript-level scoring is high-confidence only when a usable public transcript was actually retrieved and analyzed. Otherwise the video is explicitly low-confidence metadata/partial.",
+    }
+
+
+def build_claim_registry(videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out = []
+    for v in videos:
+        vid = v.get("id")
+        a = v.get("video_analysis", {}) or {}
+        for claim in a.get("claims", []) or []:
+            status = claim.get("status")
+            if status not in {"VERIFIED", "CREATOR_REPORTED", "OBSERVED", "INFERRED", "UNVERIFIED", "CONTRADICTED", "WITHDRAWN"}:
+                status = "UNVERIFIED"
+            evidence_ids = []
+            if claim.get("source") == "YOUTUBE_TRANSCRIPT_API_PUBLIC":
+                evidence_ids = [f"TRANSCRIPT-{vid}"]
+            else:
+                evidence_ids = [f"VIDEO-{vid}"]
+            out.append({
+                "video_id": vid,
+                "claim": claim.get("claim") or claim.get("summary"),
+                "status": status,
+                "evidence_ids": evidence_ids,
+                "verification": claim.get("verification"),
+                "categories": claim.get("categories", []),
+            })
+    return out
+
+def render_html(report: dict[str, Any], path: Path) -> None:
+    channel = report.get("channel", {})
+    title = channel.get("snippet", {}).get("title") or "YouTube Channel Deep Audit"
+    videos = report.get("videos", [])
+    summary = report.get("transcript_audit", {})
+    cards = []
+    for i, v in enumerate(videos, 1):
+        sn = v.get("snippet", {})
+        st = v.get("statistics", {})
+        a = v.get("video_analysis", {}) or {}
+        t = v.get("transcript_audit", {}) or {}
+        claims = a.get("claims", [])[:12]
+        reasons = "; ".join(a.get("policy_reasons", [])) or "No major risk signal detected."
+        transcript_line = (
+            f"<b>{html.escape(str(t.get('status','NOT_CHECKED')))}</b> · "
+            f"{t.get('word_count','—')} words · {t.get('segment_count','—')} segments · "
+            f"{html.escape(str(t.get('language_code') or 'unknown'))} · "
+            f"{'generated' if t.get('is_generated') else 'manual/unknown'}"
         )
-    sources="".join(
-        f"<tr><td>{html.escape(str(s.get('source_id','')))}</td><td><a href='{html.escape(str(s.get('url','')))}'>{html.escape(str(s.get('url','')))}</a></td><td>{html.escape(str(s.get('role','')))}</td></tr>"
-        for s in report.get("sources",[])
-    )
-    tracker="".join(f"<label><input type='checkbox' data-day='{i}'> Day {i}</label>" for i in range(1,31))
-    doc=f"""<!doctype html>
+        claim_html = "".join(
+            f"<li>{html.escape(str(c.get('claim') or c.get('summary') or ''))} — "
+            f"<b>{html.escape(str(c.get('status','')))}</b></li>"
+            for c in claims
+        ) or "<li>No transcript/title claim pattern extracted.</li>"
+        blind = "".join(f"<li>{html.escape(str(x))}</li>" for x in a.get("blind_spots", []))
+        cards.append(
+            f"<details class='video-card'><summary><strong>#{i}</strong> {html.escape(str(sn.get('title','')))}</summary>"
+            f"<div class='grid'>"
+            f"<div><b>Published</b><br>{html.escape(str(sn.get('publishedAt','')))}</div>"
+            f"<div><b>Views</b><br>{html.escape(str(st.get('viewCount','—')))}</div>"
+            f"<div><b>Likes</b><br>{html.escape(str(st.get('likeCount','—')))}</div>"
+            f"<div><b>Comments</b><br>{html.escape(str(st.get('commentCount','—')))}</div>"
+            f"<div><b>Type</b><br>{html.escape(str(v.get('content_type','')))}</div>"
+            f"<div><b>Overall beginner rating</b><br><span class='score'>{a.get('overall_beginner_rating','—')}/10</span></div>"
+            f"</div>"
+            f"<p><b>Decision:</b> {html.escape(str(a.get('decision','')))} · "
+            f"<b>Learning mode:</b> {html.escape(str(a.get('learning_mode','')))} · "
+            f"<b>Confidence:</b> {html.escape(str(a.get('confidence','')))}</p>"
+            f"<p><b>Scores:</b> usefulness {a.get('practical_usefulness','—')}/10 · "
+            f"evidence discipline {a.get('evidence_discipline','—')}/10 · "
+            f"beginner accessibility {a.get('beginner_accessibility','—')}/10 · "
+            f"repeatability {a.get('repeatability','—')}/10 · "
+            f"originality safety {a.get('originality_safety','—')}/10 · "
+            f"policy safety {a.get('policy_safety','—')}/10 · "
+            f"<b>policy risk {html.escape(str(a.get('policy_risk','')))}</b></p>"
+            f"<p><b>Transcript audit:</b> {transcript_line}</p>"
+            f"<p><b>Transcript SHA-256:</b> {html.escape(str(t.get('transcript_sha256') or '—'))}</p>"
+            f"<div class='two'><section><h3>Claims</h3><ul>{claim_html}</ul></section>"
+            f"<section><h3>Policy / safety</h3><p>{html.escape(reasons)}</p>"
+            f"<p><b>Claim-evidence gap:</b> {a.get('claim_evidence_gap','—')}</p></section></div>"
+            f"<div class='two'><section><h3>Workflow reconstruction</h3><pre>{html.escape(json.dumps(a.get('workflow',{}),ensure_ascii=False,indent=2))}</pre></section>"
+            f"<section><h3>Blind spots</h3><ul>{blind}</ul><h3>Beginner takeaway</h3><p>{html.escape(str(a.get('beginner_takeaway','')))}</p></section></div>"
+            f"<p><b>Tools:</b> {html.escape(', '.join(a.get('tools',[])) or 'none detected')}</p>"
+            f"<p><a href='https://www.youtube.com/watch?v={html.escape(str(v.get('id')))}' target='_blank' rel='noopener'>Open video</a></p>"
+            f"</details>"
+        )
+
+    doc = f"""<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{html.escape(title)} — Deep Audit</title>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{html.escape(title)} — Evidence-Bounded Deep Audit</title>
 <style>
-:root{{--bg:#fff;--fg:#171717;--muted:#666;--panel:#f5f5f7;--border:#d8d8dc;--accent:#6b5cff}}
-[data-theme='dark']{{--bg:#111;--fg:#eee;--muted:#aaa;--panel:#1b1b1e;--border:#333;--accent:#8c80ff}}
-*{{box-sizing:border-box}} body{{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}}
-aside{{position:fixed;left:0;top:0;bottom:0;width:230px;padding:18px;border-right:1px solid var(--border);background:var(--bg);overflow:auto}}
-aside a{{display:block;padding:8px 0;color:inherit;text-decoration:none}} main{{margin-left:250px;max-width:1400px;padding:28px}}
-section{{margin:0 0 42px}} h1{{font-size:34px}} .muted{{color:var(--muted)}} .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}}
-.panel{{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px}} button,input,select{{font:inherit}}
-button{{padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:var(--panel);color:var(--fg);cursor:pointer}}
-input[type=search],input[type=number]{{padding:10px;width:100%;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--fg)}}
-table{{border-collapse:collapse;width:100%}} th,td{{padding:9px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}}
-.video-card{{border:1px solid var(--border);border-radius:12px;padding:10px;margin:9px 0;background:var(--panel)}} summary{{cursor:pointer}}
-.cardgrid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:12px 0}}
-.two{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}} label{{display:block;margin:7px 0}}
-.bar{{height:10px;background:var(--panel);border-radius:999px;overflow:hidden}} .bar>span{{display:block;height:100%;width:0;background:var(--accent)}}
-.badge{{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid var(--border);font-size:12px}}
-@media(max-width:850px){{aside{{position:sticky;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--border);z-index:3}}main{{margin:0;padding:18px}}aside nav{{display:flex;gap:10px;overflow:auto}}aside a{{white-space:nowrap}}}}
-@media print{{aside,button,#interactive{{display:none!important}}main{{margin:0;max-width:none}}}}
-</style></head>
+:root {{ font-family: system-ui,-apple-system,Segoe UI,sans-serif; color-scheme: light; --bg:#f5f7fb; --card:#fff; --ink:#152033; --muted:#5d6878; --line:#dbe2ec; }}
+:root[data-theme="dark"] {{ color-scheme: dark; --bg:#0e131b; --card:#151c26; --ink:#eef3f8; --muted:#a9b5c6; --line:#293444; }}
+* {{ box-sizing:border-box; }}
+body {{ margin:0; background:var(--bg); color:var(--ink); line-height:1.5; }}
+main {{ max-width:1400px; margin:auto; padding:28px; }}
+header,section,details {{ background:var(--card); border:1px solid var(--line); border-radius:16px; }}
+header {{ padding:24px; margin-bottom:16px; }}
+.grid {{ display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin:16px 0; }}
+.grid>div {{ padding:10px; border:1px solid var(--line); border-radius:10px; }}
+.two {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }}
+.two>section {{ padding:14px; }}
+.video-card {{ margin:12px 0; padding:0 16px 16px; }}
+.video-card summary {{ cursor:pointer; padding:16px 0; font-size:1.04rem; }}
+pre {{ white-space:pre-wrap; overflow:auto; }}
+.score {{ font-size:1.3rem; font-weight:800; }}
+.toolbar {{ display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }}
+input,button {{ padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--ink); }}
+button {{ cursor:pointer; }}
+.small {{ color:var(--muted); font-size:.93rem; }}
+.badge {{ display:inline-block; padding:4px 8px; border:1px solid var(--line); border-radius:999px; margin-right:6px; }}
+@media(max-width:900px) {{ .grid {{ grid-template-columns:repeat(2,1fr); }} .two {{ grid-template-columns:1fr; }} }}
+@media print {{ .toolbar, a {{ display:none!important; }} details {{ break-inside:avoid; }} body {{ background:#fff; }} }}
+</style>
+</head>
 <body>
-<aside><nav aria-label="Audit navigation"><a href="#summary">Summary</a><a href="#start">Start Here</a><a href="#videos">Videos</a><a href="#research">Research</a><a href="#ideas">Idea Scorer</a><a href="#decision">Decision Tree</a><a href="#tracker">30-Day</a><a href="#sources">Sources</a></nav>
-<div style="margin-top:14px"><button id="theme">Toggle theme</button> <button onclick="window.print()">Print / PDF</button></div></aside>
 <main>
-<section id="summary"><span class="badge">Production Deep Audit 11.2</span><h1>{html.escape(title)}</h1>
-<p class="muted">Captured {html.escape(str(report.get("metadata",{}).get("completed_at","")))} · maximum legitimately accessible public/API/browser boundary.</p>
-<div class="grid"><div class="panel"><b>Videos</b><div>{len(videos)}</div></div><div class="panel"><b>Median views</b><div>{html.escape(str(perf.get("median_views","—")))}</div></div><div class="panel"><b>Outliers</b><div>{html.escape(str(perf.get("outlier_count","—")))}</div></div><div class="panel"><b>Posts</b><div>{len(report.get("posts",[]))}</div></div><div class="panel"><b>Comment videos</b><div>{len(report.get("comments_summary",[]))}</div></div></div></section>
-<section id="start"><div class="panel"><h2>Start Here — 10 Minutes</h2><ol><li>Pick one audience.</li><li>Find three relevant channels.</li><li>Review ten videos per channel.</li><li>Find five outliers.</li><li>Write the common pattern.</li><li>Create one original test idea.</li></ol></div></section>
-<section id="videos"><h2>Video-by-Video Inventory</h2><p class="muted">Search/filter is only a convenience; inventory completeness is defined by the collection record.</p><input id="search" type="search" placeholder="Search titles, descriptions, IDs..." autocomplete="off"><div id="cards">{''.join(cards)}</div></section>
-<section id="research"><h2>Research Analyzer</h2><div class="two"><div class="panel">
-<label>Video views<input id="views" type="number" value="10000" min="0"></label><label>Typical views<input id="typical" type="number" value="{int(perf.get("median_views") or 1000)}" min="0"></label><label>Age in days<input id="age" type="number" value="30" min="0.01" step="0.01"></label>
-<p><b>Outlier ratio:</b> <span id="out"></span></p><p><b>Views/day:</b> <span id="vpd"></span></p><p><b>Views/hour:</b> <span id="vph"></span></p><p><b>Research signal:</b> <span id="signal"></span></p><p class="muted">Heuristic only; not causal or predictive.</p>
-</div><div class="panel"><b>Use responsibly</b><p>Keep format, age, topic and context comparable. A high ratio is a research signal, not proof of why a video won.</p></div></div></section>
-<section id="ideas"><h2>Idea Scorer</h2><div class="panel" id="idea-box"></div></section>
-<section id="decision"><h2>Decision Tree</h2><div class="panel"><label>Recent demand? <select id="d1"><option value="y">Yes</option><option value="n">No</option></select></label><label>Original angle? <select id="d2"><option value="y">Yes</option><option value="n">No</option></select></label><label>Safe/original production? <select id="d3"><option value="y">Yes</option><option value="n">No</option></select></label><label>Clear promise? <select id="d4"><option value="y">Yes</option><option value="n">No</option></select></label><button id="decide">Decide</button><p><b>Result:</b> <span id="decision-result">—</span></p></div></section>
-<section id="tracker"><h2>30-Day Beginner Tracker</h2><div class="panel"><p><b><span id="count">0</span> / 30</b></p><div class="bar"><span id="progress"></span></div><div class="two" style="margin-top:14px">{tracker}</div><button id="reset" style="margin-top:12px">Reset Progress</button></div></section>
-<section id="sources"><h2>Sources / Evidence Register</h2><div class="panel"><table><thead><tr><th>Source</th><th>URL</th><th>Role</th></tr></thead><tbody>{sources}</tbody></table></div></section>
-<section><h2>Beginner FAQ</h2><div class="two"><div class="panel"><b>Expensive tools?</b><p>Not required. Validate the workflow before increasing costs.</p></div><div class="panel"><b>Copy viral videos?</b><p>Study demand and structure; create original expression and evidence.</p></div><div class="panel"><b>First videos fail?</b><p>Treat them as experiments and change one major variable at a time.</p></div><div class="panel"><b>Show your face?</b><p>No. A faceless format still needs original value and audience fit.</p></div></div></section>
-<section><h2>Final One-Page Playbook</h2><div class="panel"><b>Research → Outlier → Pattern → Original idea → Script → Production → Packaging → Publish → Measure → Decide.</b><p>Separate observations, verified claims, creator-reported claims and recommendations. Never hide incomplete evidence.</p></div></section>
+<header>
+<h1>{html.escape(title)} — Evidence-Bounded Deep Audit</h1>
+<p class="small">Every video is scored separately. Transcript availability is never treated as proof of truth; financial, growth and time-to-result claims remain creator-reported until independently verified.</p>
+<div class="toolbar"><input id="search" placeholder="Filter videos by title, risk, decision or claim…"><button id="theme">Toggle theme</button><button onclick="window.print()">Print</button></div>
+<div class="badge">Videos: {len(videos)}</div>
+<div class="badge">Full transcripts: {summary.get('full_transcript_count','—')}</div>
+<div class="badge">Transcript coverage: {summary.get('coverage_percent','—')}%</div>
+<div class="badge">Full transcript coverage: {summary.get('full_coverage_percent','—')}%</div>
+</header>
+<section style="padding:16px;margin-bottom:16px">
+<h2>Transcript coverage</h2>
+<pre>{html.escape(json.dumps(summary,ensure_ascii=False,indent=2))}</pre>
+</section>
+<section style="padding:16px">
+<h2>Individual video audits</h2>
+{''.join(cards)}
+</section>
 </main>
 <script>
-const reportData=${data};
-const root=document.documentElement, theme=document.getElementById('theme');
-const savedTheme=localStorage.getItem('ytAuditTheme'); if(savedTheme) root.setAttribute('data-theme',savedTheme);
-theme.onclick=()=>{{const n=root.getAttribute('data-theme')==='dark'?'light':'dark';root.setAttribute('data-theme',n);localStorage.setItem('ytAuditTheme',n)}};
-document.getElementById('search').oninput=()=>{{const n=document.getElementById('search').value.toLowerCase();document.querySelectorAll('.video-card').forEach(c=>c.hidden=!c.innerText.toLowerCase().includes(n))}};
-function calc(){{const v=+views.value||0,t=+typical.value||0,a=+age.value||.01;out.textContent=t?(v/t).toFixed(2)+'x':'—';vpd.textContent=(v/a).toFixed(2);vph.textContent=(v/(a*24)).toFixed(2);signal.textContent=t?Math.min(100,Math.round(50+10*Math.log10(Math.max(1,v/t))))+'/100':'—'}}
-['views','typical','age'].forEach(id=>document.getElementById(id).oninput=calc);calc();
-const names=['Demand','Recent evidence','Outlier strength','Audience fit','Originality','Production simplicity','Monetization potential','Policy/copyright safety'];
-idea-box.innerHTML='<p>Score each 1–5.</p>'+names.map((n,i)=>'<label>'+n+' <input class="idea" type="number" min="1" max="5" value="3"></label>').join('')+'<p><b>Total:</b> <span id="ideaTotal">24</span> / 40</p><p><b>Recommendation:</b> <span id="ideaRec">TEST</span></p>';
-function score(){{const s=[...document.querySelectorAll('.idea')].reduce((a,x)=>a+(+x.value||0),0);ideaTotal.textContent=s;ideaRec.textContent=s>=32?'MAKE IT':s>=25?'TEST':s>=18?'REDESIGN':'AVOID'}};document.querySelectorAll('.idea').forEach(x=>x.oninput=score);
-decide.onclick=()=>{{const a=[d1.value,d2.value,d3.value,d4.value];decisionResult.textContent=d3.value==='n'?'AVOID':a.every(x=>x==='y')?'MAKE IT':d2.value==='n'?'REDESIGN':'RESEARCH MORE'}};
-const trackerKey='ytAuditTracker', boxes=[...document.querySelectorAll('[data-day]')], saved=JSON.parse(localStorage.getItem(trackerKey)||'[]');boxes.forEach(b=>b.checked=saved.includes(+b.dataset.day));
-function save(){{const days=boxes.filter(b=>b.checked).map(b=>+b.dataset.day);localStorage.setItem(trackerKey,JSON.stringify(days));count.textContent=days.length;progress.style.width=(days.length/30*100)+'%'}}boxes.forEach(b=>b.onchange=save);save();reset.onclick=()=>{{localStorage.removeItem(trackerKey);boxes.forEach(b=>b.checked=false);save()}};
-</script></body></html>"""
+const root=document.documentElement;
+const saved=localStorage.getItem('ytAuditTheme');
+if(saved) root.setAttribute('data-theme',saved);
+document.getElementById('theme').onclick=()=>{{
+  const n=root.getAttribute('data-theme')==='dark'?'light':'dark';
+  root.setAttribute('data-theme',n);
+  localStorage.setItem('ytAuditTheme',n);
+}};
+document.getElementById('search').oninput=()=>{{
+  const n=document.getElementById('search').value.toLowerCase();
+  document.querySelectorAll('.video-card').forEach(c=>c.hidden=!c.innerText.toLowerCase().includes(n));
+}};
+</script>
+</body>
+</html>"""
     path.write_text(doc, encoding="utf-8")
 
-
-def write_artifacts(out: Path, report: dict[str,Any], comments: list[dict[str,Any]]) -> None:
-    atomic_write(out/"audit.json", report)
+def write_artifacts(out: Path, report: dict[str, Any], comments: list[dict[str, Any]]) -> None:
+    atomic_write(out / "audit.json", report)
     schema_source = Path(__file__).resolve().parents[1] / "schema.json"
     if schema_source.exists():
-        (out/"schema.json").write_text(schema_source.read_text(encoding="utf-8"), encoding="utf-8")
+        (out / "schema.json").write_text(schema_source.read_text(encoding="utf-8"), encoding="utf-8")
     else:
         raise RuntimeError("Canonical schema.json is missing from the repository.")
-    (out/"config.yaml").write_text("version: 11.2\nmode: DEEP\npublic_only: true\ncredential_source: GITHUB_ACTIONS:YOUTUBE_API_KEY\n", encoding="utf-8")
-    csv_write(out/"video_inventory.csv",[
-        {"video_id":v.get("id"),"title":v.get("snippet",{}).get("title"),"published_at":v.get("snippet",{}).get("publishedAt"),"views":v.get("statistics",{}).get("viewCount"),
-         "likes":v.get("statistics",{}).get("likeCount"),"comments":v.get("statistics",{}).get("commentCount"),"duration":v.get("contentDetails",{}).get("duration"),
-         "content_type":v.get("content_type"),"transcript_status":v.get("transcript_status")}
-        for v in report.get("videos",[])
-    ],["video_id","title","published_at","views","likes","comments","duration","content_type","transcript_status"])
-    csv_write(out/"comments_coverage.csv",report.get("comments_summary",[]),["video_id","top_level_threads","replies_collected","complete","reply_pages","coverage"])
-    csv_write(out/"comments.csv",comments,["video_id","kind","comment_id","text","published_at"])
-    csv_write(out/"sources.csv",report.get("sources",[]),["source_id","url","role","captured_at"])
-    csv_write(out/"video_analysis.csv",[
-        {
-            "video_id":v.get("id"),
-            "title":v.get("snippet",{}).get("title"),
-            "decision":v.get("video_analysis",{}).get("decision"),
-            "usefulness":v.get("video_analysis",{}).get("practical_usefulness"),
-            "evidence":v.get("video_analysis",{}).get("evidence_quality"),
-            "beginner":v.get("video_analysis",{}).get("beginner_accessibility"),
-            "repeatability":v.get("video_analysis",{}).get("repeatability"),
-            "originality":v.get("video_analysis",{}).get("originality_safety"),
-            "policy_risk":v.get("video_analysis",{}).get("policy_risk"),
-            "transcript_status":v.get("transcript_status")
-        } for v in report.get("videos",[])
-    ],["video_id","title","decision","usefulness","evidence","beginner","repeatability","originality","policy_risk","transcript_status"])
-    lines=["# Video-by-Video Analysis","",f"Videos analyzed: {len(report.get('videos',[]))}",""]
-    for i,v in enumerate(report.get("videos",[]),1):
-        a=v.get("video_analysis",{})
-        lines += [
-            f"## {i}. {v.get('snippet',{}).get('title','')}",
-            f"- Video ID: {v.get('id')}",
-            f"- Decision: {a.get('decision')}",
-            f"- Scores: usefulness {a.get('practical_usefulness')}/10; evidence {a.get('evidence_quality')}/10; beginner {a.get('beginner_accessibility')}/10; repeatability {a.get('repeatability')}/10; originality {a.get('originality_safety')}/10; policy risk {a.get('policy_risk')}",
-            f"- Transcript: {v.get('transcript_status')}",
-            f"- Claims: {json.dumps(a.get('claims',[]),ensure_ascii=False)}",
-            f"- Tools: {', '.join(a.get('tools',[])) or 'none detected'}",
-            f"- Workflow: {json.dumps(a.get('workflow',{}),ensure_ascii=False)}",
-            f"- Blind spots: {'; '.join(a.get('blind_spots',[]))}",
-            f"- Beginner takeaway: {a.get('beginner_takeaway')}",
-            ""
-        ]
-    (out/"video_analysis.md").write_text("\n".join(lines),encoding="utf-8")
-    render_html(report,out/"audit.html")
-    manifest={"schema_version":"11.2.0","generated_at":utc_now(),"files":{}}
-    for p in sorted(out.iterdir()):
-        if p.is_file() and p.name not in {"release_manifest.json","checkpoint.json"}:
-            manifest["files"][p.name]=sha256_file(p)
-    atomic_write(out/"release_manifest.json",manifest)
 
+    (out / "config.yaml").write_text(
+        "version: 11.3-production\nmode: DEEP\npublic_only: true\n"
+        "credential_source: GITHUB_ACTIONS:YOUTUBE_API_KEY\n"
+        "transcript_engine: youtube-transcript-api+public-ui\n"
+        "transcript_full_text_persisted: false\n",
+        encoding="utf-8",
+    )
+
+    csv_write(
+        out / "video_inventory.csv",
+        [
+            {
+                "video_id": v.get("id"),
+                "title": v.get("snippet", {}).get("title"),
+                "published_at": v.get("snippet", {}).get("publishedAt"),
+                "views": v.get("statistics", {}).get("viewCount"),
+                "likes": v.get("statistics", {}).get("likeCount"),
+                "comments": v.get("statistics", {}).get("commentCount"),
+                "duration": v.get("contentDetails", {}).get("duration"),
+                "content_type": v.get("content_type"),
+                "transcript_status": v.get("transcript_status"),
+                "transcript_source": (v.get("transcript_audit") or {}).get("source"),
+                "overall_beginner_rating": (v.get("video_analysis") or {}).get("overall_beginner_rating"),
+                "audit_confidence": (v.get("video_analysis") or {}).get("confidence"),
+            }
+            for v in report.get("videos", [])
+        ],
+        [
+            "video_id","title","published_at","views","likes","comments","duration",
+            "content_type","transcript_status","transcript_source","overall_beginner_rating",
+            "audit_confidence",
+        ],
+    )
+    csv_write(
+        out / "comments_coverage.csv",
+        report.get("comments_summary", []),
+        ["video_id","top_level_threads","replies_collected","complete","reply_pages","coverage"],
+    )
+    csv_write(out / "comments.csv", comments, ["video_id","kind","comment_id","text","published_at"])
+    csv_write(out / "sources.csv", report.get("sources", []), ["source_id","url","role","captured_at"])
+    csv_write(
+        out / "video_analysis.csv",
+        [
+            {
+                "video_id": v.get("id"),
+                "title": v.get("snippet", {}).get("title"),
+                "decision": (v.get("video_analysis") or {}).get("decision"),
+                "overall_beginner_rating": (v.get("video_analysis") or {}).get("overall_beginner_rating"),
+                "usefulness": (v.get("video_analysis") or {}).get("practical_usefulness"),
+                "evidence_discipline": (v.get("video_analysis") or {}).get("evidence_discipline"),
+                "beginner_accessibility": (v.get("video_analysis") or {}).get("beginner_accessibility"),
+                "repeatability": (v.get("video_analysis") or {}).get("repeatability"),
+                "originality_safety": (v.get("video_analysis") or {}).get("originality_safety"),
+                "policy_safety": (v.get("video_analysis") or {}).get("policy_safety"),
+                "policy_risk": (v.get("video_analysis") or {}).get("policy_risk"),
+                "confidence": (v.get("video_analysis") or {}).get("confidence"),
+                "claim_evidence_gap": (v.get("video_analysis") or {}).get("claim_evidence_gap"),
+                "transcript_status": v.get("transcript_status"),
+                "transcript_word_count": (v.get("transcript_audit") or {}).get("word_count"),
+            }
+            for v in report.get("videos", [])
+        ],
+        [
+            "video_id","title","decision","overall_beginner_rating","usefulness",
+            "evidence_discipline","beginner_accessibility","repeatability","originality_safety",
+            "policy_safety","policy_risk","confidence","claim_evidence_gap","transcript_status",
+            "transcript_word_count",
+        ],
+    )
+
+    lines = [
+        "# Video-by-Video Evidence-Bounded Analysis",
+        "",
+        f"Videos analyzed: {len(report.get('videos', []))}",
+        f"Full transcripts: {report.get('transcript_audit', {}).get('full_transcript_count', 0)}",
+        "",
+    ]
+    for i, v in enumerate(report.get("videos", []), 1):
+        a = v.get("video_analysis", {}) or {}
+        t = v.get("transcript_audit", {}) or {}
+        lines += [
+            f"## {i}. {v.get('snippet', {}).get('title', '')}",
+            f"- Video ID: {v.get('id')}",
+            f"- Views: {v.get('statistics', {}).get('viewCount')}",
+            f"- Decision: {a.get('decision')}",
+            f"- Overall beginner rating: {a.get('overall_beginner_rating')}/10",
+            f"- Confidence: {a.get('confidence')}",
+            f"- Evidence grade: {a.get('evidence_grade')}",
+            f"- Transcript: {t.get('status')} · {t.get('word_count','—')} words · source {t.get('source') or 'none'}",
+            f"- Scores: usefulness {a.get('practical_usefulness')}/10; evidence discipline {a.get('evidence_discipline')}/10; beginner accessibility {a.get('beginner_accessibility')}/10; repeatability {a.get('repeatability')}/10; originality safety {a.get('originality_safety')}/10; policy safety {a.get('policy_safety')}/10; policy risk {a.get('policy_risk')}",
+            f"- Claim-evidence gap: {a.get('claim_evidence_gap')}",
+            f"- Claim treatment: {json.dumps(a.get('claims', []), ensure_ascii=False)}",
+            f"- Workflow: {json.dumps(a.get('workflow', {}), ensure_ascii=False)}",
+            f"- Blind spots: {'; '.join(a.get('blind_spots', []))}",
+            f"- Beginner takeaway: {a.get('beginner_takeaway')}",
+            "",
+        ]
+    (out / "video_analysis.md").write_text("\n".join(lines), encoding="utf-8")
+    render_html(report, out / "audit.html")
+
+    manifest = {"schema_version": "11.3.0", "generated_at": utc_now(), "files": {}}
+    for p in sorted(out.iterdir()):
+        if p.is_file() and p.name not in {"release_manifest.json", "checkpoint.json"}:
+            manifest["files"][p.name] = sha256_file(p)
+    atomic_write(out / "release_manifest.json", manifest)
 
 def csv_write(path: Path, rows: list[dict[str,Any]], fields: list[str]) -> None:
     path.parent.mkdir(parents=True,exist_ok=True)
@@ -723,151 +986,394 @@ def csv_write(path: Path, rows: list[dict[str,Any]], fields: list[str]) -> None:
 
 
 def run(args: argparse.Namespace) -> int:
-    skill=Path(args.skill)
-    if not skill.exists() or skill.stat().st_size==0:
-        print(json.dumps({"status":"FAIL","reason":"SKILL_FILE_UNREADABLE","api_key_exposed":False})); return 2
-    key=os.getenv("YOUTUBE_API_KEY")
-    if not key or not plausible_key(key):
-        print(json.dumps({"status":"FAIL","reason":"API_KEY_MISSING_OR_INVALID","api_key_exposed":False})); return 2
-    out=Path(args.output); out.mkdir(parents=True,exist_ok=True)
-    checkpoint=Checkpoint(out/"checkpoint.json")
-    quota=Quota(checkpoint,args.quota_budget)
-    api=API(key,quota,args.retries)
-    started=checkpoint.get("started_at") or utc_now()
-    checkpoint.set("started_at",started)
-    checkpoint.set("channel_input",args.channel)
-    checkpoint.set("credential_present",True)
-    checkpoint.set("credential_exposed",False)
-    checkpoint.set("skill_sha256",sha256_file(skill))
+    skill = Path(args.skill)
+    if not skill.exists() or skill.stat().st_size == 0:
+        print(json.dumps({"status": "FAIL", "reason": "SKILL_FILE_UNREADABLE", "api_key_exposed": False}))
+        return 2
 
-    channel,identity=resolve_channel(api,args.channel)
+    key = os.getenv("YOUTUBE_API_KEY")
+    if not key or not plausible_key(key):
+        print(json.dumps({"status": "FAIL", "reason": "API_KEY_MISSING_OR_INVALID", "api_key_exposed": False}))
+        return 2
+
+    out = Path(args.output)
+    out.mkdir(parents=True, exist_ok=True)
+    checkpoint = Checkpoint(out / "checkpoint.json")
+    quota = Quota(checkpoint, args.quota_budget)
+    api = API(key, quota, args.retries)
+    started = checkpoint.get("started_at") or utc_now()
+
+    checkpoint.set("started_at", started)
+    checkpoint.set("channel_input", args.channel)
+    checkpoint.set("credential_present", True)
+    checkpoint.set("credential_exposed", False)
+    checkpoint.set("skill_sha256", sha256_file(skill))
+
+    channel, identity = resolve_channel(api, args.channel)
     if not channel:
-        report={
-            "metadata":{"methodology_version":"11.2-production","schema_version":"11.2.0","started_at":started,"completed_at":utc_now(),"canonical_channel_url":args.channel,
-                        "input_contract":{"skill_file_present":True,"channel_url_present":True,"api_key_present":True,"api_key_exposed":False}},
-            "channel":{},"coverage":{"status":"BLOCKED","identity_resolution":identity},"access_matrix":[],"snapshots":[],"videos":[],"posts":[],"comments_summary":[],"playlists":[],"channel_sections":[],"transcripts":[],
-            "sources":source_register(),"claims":[],"metrics":[],"calculations":[],"risks":[],"hypotheses":[],"experiments":[],"recommendations":[],"benchmarks":[],"knowledge_gaps":[],"deltas":[],"policy_checks":[],
-            "decision_queue":{},"validation":{"status":"BLOCKED"},"executive_summary":{},"beginner_plan":beginner_plan(),"analysis":{},
-            "reproducibility":{"quota":quota.summary(),"credential_present":True,"credential_exposed":False},"self_audit":{"api_key_exposed":False,"limitations":[identity]}
+        report = {
+            "metadata": {
+                "audit_id": "blocked",
+                "methodology_version": "11.3-production",
+                "schema_version": "11.3.0",
+                "started_at": started,
+                "completed_at": utc_now(),
+                "canonical_channel_url": args.channel,
+                "input_contract": {
+                    "skill_file_present": True,
+                    "channel_url_present": True,
+                    "api_key_present": True,
+                    "api_key_exposed": False,
+                },
+            },
+            "channel": {},
+            "coverage": {"status": "BLOCKED", "identity_resolution": identity},
+            "access_matrix": [],
+            "snapshots": [],
+            "videos": [],
+            "posts": [],
+            "comments_summary": [],
+            "playlists": [],
+            "channel_sections": [],
+            "transcripts": [],
+            "transcript_audit": transcript_summary({}, 0),
+            "sources": source_register(),
+            "claims": [],
+            "metrics": [],
+            "calculations": [],
+            "risks": [],
+            "hypotheses": [],
+            "experiments": [],
+            "recommendations": [],
+            "benchmarks": [],
+            "knowledge_gaps": [],
+            "deltas": [],
+            "policy_checks": [],
+            "decision_queue": {},
+            "validation": {"status": "BLOCKED"},
+            "executive_summary": {},
+            "beginner_plan": beginner_plan(),
+            "analysis": {},
+            "reproducibility": {"quota": quota.summary(), "credential_present": True, "credential_exposed": False},
+            "self_audit": {"api_key_exposed": False, "limitations": [identity]},
         }
-        write_artifacts(out,report,[])
+        write_artifacts(out, report, [])
         return 3
 
-    channel_id=channel["id"]
-    canonical=f"https://www.youtube.com/channel/{channel_id}"
-    checkpoint.set("channel_id",channel_id); checkpoint.set("channel",channel)
-    uploads=channel.get("contentDetails",{}).get("relatedPlaylists",{}).get("uploads")
+    channel_id = channel["id"]
+    canonical = f"https://www.youtube.com/channel/{channel_id}"
+    checkpoint.set("channel_id", channel_id)
+    checkpoint.set("channel", channel)
+    uploads = channel.get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads")
     if not uploads:
         return 4
 
-    inventory,inv_cov=paginate(api,checkpoint,"inventory","playlistItems.list",{"part":"snippet,contentDetails,status","playlistId":uploads,"maxResults":50},args.max_pages)
-    video_ids=list(dict.fromkeys([x.get("contentDetails",{}).get("videoId") for x in inventory if x.get("contentDetails",{}).get("videoId")]))
-    checkpoint.set("video_ids",video_ids)
+    inventory, inv_cov = paginate(
+        api, checkpoint, "inventory", "playlistItems.list",
+        {"part": "snippet,contentDetails,status", "playlistId": uploads, "maxResults": 50},
+        args.max_pages,
+    )
+    video_ids = list(dict.fromkeys(
+        [x.get("contentDetails", {}).get("videoId") for x in inventory if x.get("contentDetails", {}).get("videoId")]
+    ))
+    checkpoint.set("video_ids", video_ids)
 
-    videos=checkpoint.get("videos",[])
-    by_id={v.get("id"):v for v in videos}
-    missing=[x for x in video_ids if x not in by_id]
-    parts="id,snippet,contentDetails,statistics,status,topicDetails,recordingDetails,liveStreamingDetails,localizations,paidProductPlacementDetails,brandPartner"
-    for i in range(0,len(missing),50):
-        group=missing[i:i+50]
-        res=api.get("videos.list",{"part":parts,"id":",".join(group)})
+    videos = checkpoint.get("videos", [])
+    by_id = {v.get("id"): v for v in videos}
+    missing = [x for x in video_ids if x not in by_id]
+    parts = "id,snippet,contentDetails,statistics,status,topicDetails,recordingDetails,liveStreamingDetails,localizations,paidProductPlacementDetails,brandPartner"
+    for i in range(0, len(missing), 50):
+        group = missing[i:i + 50]
+        res = api.get("videos.list", {"part": parts, "id": ",".join(group)})
         if not res.get("ok"):
             break
-        for v in (res.get("data") or {}).get("items",[]):
-            by_id[v.get("id")]=v
-        checkpoint.set("videos",list(by_id.values()))
-    videos=list(by_id.values())
+        for v in (res.get("data") or {}).get("items", []):
+            by_id[v.get("id")] = v
+        checkpoint.set("videos", list(by_id.values()))
+    videos = list(by_id.values())
 
-    playlists,playlist_cov=paginate(api,checkpoint,"playlists","playlists.list",{"part":"snippet,contentDetails,status","channelId":channel_id,"maxResults":50},args.max_pages)
-    sections,section_cov=paginate(api,checkpoint,"sections","channelSections.list",{"part":"snippet,contentDetails","channelId":channel_id},args.max_pages)
+    playlists, playlist_cov = paginate(
+        api, checkpoint, "playlists", "playlists.list",
+        {"part": "snippet,contentDetails,status", "channelId": channel_id, "maxResults": 50},
+        args.max_pages,
+    )
+    sections, section_cov = paginate(
+        api, checkpoint, "sections", "channelSections.list",
+        {"part": "snippet,contentDetails", "channelId": channel_id},
+        args.max_pages,
+    )
 
-    browser={"status":"SKIPPED","shorts":[],"posts":[],"transcripts":[],"limitations":["Browser disabled."]} if args.skip_browser else browser_collect(canonical,video_ids,args.transcript_limit,args.max_scrolls)
-    short_ids={x.get("video_id") for x in browser.get("shorts",[])}
+    # -------- Transcript engine: primary public transcript fetch + browser fallback --------
+    transcript_cache = checkpoint.get("transcript_audits", {})
+    if not isinstance(transcript_cache, dict):
+        transcript_cache = {}
+
+    transcript_target_ids = video_ids[:max(0, args.transcript_limit)]
+    for vid in transcript_target_ids:
+        record = transcript_cache.get(vid)
+        if not record or record.get("status") in {"TRANSCRIPT_FETCH_ERROR", "TRANSCRIPT_REQUEST_BLOCKED", "NETWORK_ERROR"}:
+            transcript_cache[vid] = audit_video_transcript(vid)
+            checkpoint.set("transcript_audits", transcript_cache)
+            time.sleep(0.25)
+
+    browser_transcript_ids = [
+        vid for vid in transcript_target_ids
+        if transcript_cache.get(vid, {}).get("status") != "FULL_TRANSCRIPT_AVAILABLE"
+    ]
+    browser = (
+        {
+            "status": "SKIPPED",
+            "shorts": [],
+            "posts": [],
+            "transcripts": [],
+            "surface_checks": [],
+            "limitations": ["Browser disabled."],
+        }
+        if args.skip_browser
+        else browser_collect(
+            canonical,
+            video_ids,
+            0,
+            args.max_scrolls,
+            transcript_ids=browser_transcript_ids,
+        )
+    )
+
+    for fallback in browser.get("transcripts", []):
+        vid = fallback.get("video_id")
+        if not vid:
+            continue
+        transcript_cache[vid] = merge_transcript_records(transcript_cache.get(vid), fallback)
+
+    checkpoint.set("transcript_audits", transcript_cache)
+
+    short_ids = {x.get("video_id") for x in browser.get("shorts", [])}
     for v in videos:
-        ctype,cmethod=classify_video(v,short_ids)
-        desc=v.get("snippet",{}).get("description","") or ""
-        v["content_type"]=ctype; v["classification_method"]=cmethod
-        v["transcript_status"]=next((x.get("status") for x in browser.get("transcripts",[]) if x.get("video_id")==v.get("id")),"NOT_CHECKED")
-        v["_audit_hints"]={"resources":resource_hints(desc),"keywords":keyword_hints(desc)}
+        ctype, cmethod = classify_video(v, short_ids)
+        desc = v.get("snippet", {}).get("description", "") or ""
+        t = transcript_cache.get(v.get("id"), {"video_id": v.get("id"), "status": "NOT_ATTEMPTED", "text_retained": False})
+        v["content_type"] = ctype
+        v["classification_method"] = cmethod
+        v["transcript_status"] = t.get("status", "NOT_CHECKED")
+        v["transcript_audit"] = t
+        v["_audit_hints"] = {"resources": resource_hints(desc), "keywords": keyword_hints(desc)}
 
-    comments_summary=checkpoint.get("comments_summary",[])
-    comments=checkpoint.get("comments",[])
-    completed={x.get("video_id") for x in comments_summary if x.get("complete") or x.get("status") in {"COMMENTS_DISABLED","UNAVAILABLE"}}
+    # -------- Exhaustive public comments --------
+    comments_summary = checkpoint.get("comments_summary", [])
+    comments = checkpoint.get("comments", [])
+    completed = {
+        x.get("video_id")
+        for x in comments_summary
+        if x.get("complete") or x.get("status") in {"COMMENTS_DISABLED", "UNAVAILABLE"}
+    }
     if not args.skip_comments:
         for vid in video_ids:
             if vid in completed:
                 continue
-            threads,tcov=paginate(api,checkpoint,f"comments.{vid}.threads","commentThreads.list",{"part":"id,snippet,replies","videoId":vid,"maxResults":100,"order":"time","textFormat":"plainText"},args.comment_max_pages)
-            if tcov.get("stop_reason")=="COMMENTS_DISABLED":
-                summary={"video_id":vid,"status":"COMMENTS_DISABLED","complete":True,"coverage":tcov}
-                comments_summary.append(summary); checkpoint.set("comments_summary",comments_summary); continue
-            reply_map={}; replies_complete=True; reply_pages=0
+            threads, tcov = paginate(
+                api, checkpoint, f"comments.{vid}.threads", "commentThreads.list",
+                {"part": "id,snippet,replies", "videoId": vid, "maxResults": 100, "order": "time", "textFormat": "plainText"},
+                args.comment_max_pages,
+            )
+            if tcov.get("stop_reason") == "COMMENTS_DISABLED":
+                comments_summary.append({"video_id": vid, "status": "COMMENTS_DISABLED", "complete": True, "coverage": tcov})
+                checkpoint.set("comments_summary", comments_summary)
+                continue
+
+            reply_map = {}
+            replies_complete = True
+            reply_pages = 0
             for thread in threads:
-                top=(thread.get("snippet") or {}).get("topLevelComment") or {}
-                parent=top.get("id"); inline=(thread.get("replies") or {}).get("comments",[])
+                top = (thread.get("snippet") or {}).get("topLevelComment") or {}
+                parent = top.get("id")
+                inline = (thread.get("replies") or {}).get("comments", [])
                 for r in inline:
-                    if r.get("id"): reply_map[r["id"]]=r
-                total=int((thread.get("snippet") or {}).get("totalReplyCount") or 0)
-                if parent and total>len(inline):
-                    reps,rcov=paginate(api,checkpoint,f"comments.{vid}.replies.{parent}","comments.list",{"part":"id,snippet","parentId":parent,"maxResults":100,"textFormat":"plainText"},args.comment_max_pages)
-                    reply_pages += rcov["pages"]; replies_complete = replies_complete and rcov["complete"]
+                    if r.get("id"):
+                        reply_map[r["id"]] = r
+                total = int((thread.get("snippet") or {}).get("totalReplyCount") or 0)
+                if parent and total > len(inline):
+                    reps, rcov = paginate(
+                        api, checkpoint, f"comments.{vid}.replies.{parent}", "comments.list",
+                        {"part": "id,snippet", "parentId": parent, "maxResults": 100, "textFormat": "plainText"},
+                        args.comment_max_pages,
+                    )
+                    reply_pages += rcov["pages"]
+                    replies_complete = replies_complete and rcov["complete"]
                     for r in reps:
-                        if r.get("id"): reply_map[r["id"]]=r
-            seen={r.get("comment_id") for r in comments if r.get("comment_id")}
+                        if r.get("id"):
+                            reply_map[r["id"]] = r
+
+            seen = {r.get("comment_id") for r in comments if r.get("comment_id")}
             for thread in threads:
-                top=(thread.get("snippet") or {}).get("topLevelComment") or {}; sn=top.get("snippet") or {}; cid=top.get("id")
+                top = (thread.get("snippet") or {}).get("topLevelComment") or {}
+                sn = top.get("snippet") or {}
+                cid = top.get("id")
                 if cid and cid not in seen:
-                    comments.append({"video_id":vid,"kind":"top_level","comment_id":cid,"text":sn.get("textOriginal") or sn.get("textDisplay"),"published_at":sn.get("publishedAt")}); seen.add(cid)
+                    comments.append({
+                        "video_id": vid,
+                        "kind": "top_level",
+                        "comment_id": cid,
+                        "text": sn.get("textOriginal") or sn.get("textDisplay"),
+                        "published_at": sn.get("publishedAt"),
+                    })
+                    seen.add(cid)
             for r in reply_map.values():
-                rid=r.get("id"); rs=r.get("snippet") or {}
+                rid = r.get("id")
+                rs = r.get("snippet") or {}
                 if rid and rid not in seen:
-                    comments.append({"video_id":vid,"kind":"reply","comment_id":rid,"text":rs.get("textOriginal") or rs.get("textDisplay"),"published_at":rs.get("publishedAt")}); seen.add(rid)
-            summary={"video_id":vid,"top_level_threads":len(threads),"replies_collected":len(reply_map),"reply_pages":reply_pages,"complete":tcov["complete"] and replies_complete,"coverage":tcov}
-            comments_summary.append(summary)
-            checkpoint.set("comments_summary",comments_summary); checkpoint.set("comments",comments)
-            if quota.used>=quota.run_budget:
+                    comments.append({
+                        "video_id": vid,
+                        "kind": "reply",
+                        "comment_id": rid,
+                        "text": rs.get("textOriginal") or rs.get("textDisplay"),
+                        "published_at": rs.get("publishedAt"),
+                    })
+                    seen.add(rid)
+
+            comments_summary.append({
+                "video_id": vid,
+                "top_level_threads": len(threads),
+                "replies_collected": len(reply_map),
+                "reply_pages": reply_pages,
+                "complete": tcov["complete"] and replies_complete,
+                "coverage": tcov,
+            })
+            checkpoint.set("comments_summary", comments_summary)
+            checkpoint.set("comments", comments)
+            if quota.used >= quota.run_budget:
                 break
 
     for v in videos:
-        v["video_analysis"] = per_video_analysis(v, comments)
+        t = transcript_cache.get(v.get("id"), {"video_id": v.get("id"), "status": "NOT_ATTEMPTED", "text_retained": False})
+        v["video_analysis"] = per_video_analysis(v, comments, t)
 
-    captured=utc_now()
-    report={
-        "metadata":{"audit_id":f"{channel_id}-{captured.replace(':','').replace('+00:00','Z')}","methodology_version":"11.2-production","schema_version":"11.2.0",
-                    "started_at":started,"completed_at":captured,"canonical_channel_url":canonical,
-                    "input_contract":{"skill_file_present":True,"channel_url_present":True,"api_key_present":True,"api_key_exposed":False}},
-        "channel":channel,
-        "channel_id":channel_id,
-        "coverage":{"inventory":inv_cov,"video_details":{"discovered":len(video_ids),"collected":len(videos),"complete":len(videos)==len(video_ids)},
-                   "playlists":playlist_cov,"channel_sections":section_cov,"public_comments":{"video_records":len(comments_summary),"complete_videos":sum(1 for x in comments_summary if x.get("complete"))},
-                   "browser":browser,"public_access_boundary":"maximum legitimately accessible public/API/browser evidence observed during this run"},
-        "access_matrix":[
-            {"surface":"uploads","mode":"YOUTUBE_DATA_API","status":"SUCCESS" if inv_cov.get("complete") else "PARTIAL"},
-            {"surface":"video_details","mode":"YOUTUBE_DATA_API","status":"SUCCESS" if len(videos)==len(video_ids) else "PARTIAL"},
-            {"surface":"playlists","mode":"YOUTUBE_DATA_API","status":"SUCCESS" if playlist_cov.get("complete") else "PARTIAL"},
-            {"surface":"channel_sections","mode":"YOUTUBE_DATA_API","status":"SUCCESS" if section_cov.get("complete") else "PARTIAL"},
-            {"surface":"comments","mode":"YOUTUBE_DATA_API","status":"PARTIAL_OR_COMPLETE_PER_VIDEO"},
-            {"surface":"posts","mode":"PUBLIC_BROWSER","status":browser.get("status")},
-            {"surface":"shorts","mode":"PUBLIC_BROWSER","status":browser.get("status")},
-            {"surface":"transcripts","mode":"PUBLIC_BROWSER","status":browser.get("status")},
-            {"surface":"private_analytics","mode":"OWNER_AUTH_REQUIRED","status":"UNAVAILABLE"},
+    captured = utc_now()
+    transcript_report = transcript_summary(transcript_cache, len(video_ids))
+    final_sources = source_register(video_ids, transcript_cache)
+    report = {
+        "metadata": {
+            "audit_id": f"{channel_id}-{captured.replace(':','').replace('+00:00','Z')}",
+            "methodology_version": "11.3-production",
+            "schema_version": "11.3.0",
+            "started_at": started,
+            "completed_at": captured,
+            "canonical_channel_url": canonical,
+            "input_contract": {
+                "skill_file_present": True,
+                "channel_url_present": True,
+                "api_key_present": True,
+                "api_key_exposed": False,
+            },
+        },
+        "channel": channel,
+        "channel_id": channel_id,
+        "coverage": {
+            "inventory": inv_cov,
+            "video_details": {"discovered": len(video_ids), "collected": len(videos), "complete": len(videos) == len(video_ids)},
+            "playlists": playlist_cov,
+            "channel_sections": section_cov,
+            "public_comments": {
+                "video_records": len(comments_summary),
+                "complete_videos": sum(1 for x in comments_summary if x.get("complete")),
+            },
+            "browser": browser,
+            "transcripts": transcript_report,
+            "public_access_boundary": "Maximum legitimately accessible public/API/browser evidence observed during this run.",
+        },
+        "access_matrix": [
+            {"surface": "uploads", "mode": "YOUTUBE_DATA_API", "status": "SUCCESS" if inv_cov.get("complete") else "PARTIAL"},
+            {"surface": "video_details", "mode": "YOUTUBE_DATA_API", "status": "SUCCESS" if len(videos) == len(video_ids) else "PARTIAL"},
+            {"surface": "playlists", "mode": "YOUTUBE_DATA_API", "status": "SUCCESS" if playlist_cov.get("complete") else "PARTIAL"},
+            {"surface": "channel_sections", "mode": "YOUTUBE_DATA_API", "status": "SUCCESS" if section_cov.get("complete") else "PARTIAL"},
+            {"surface": "comments", "mode": "YOUTUBE_DATA_API", "status": "PARTIAL_OR_COMPLETE_PER_VIDEO"},
+            {"surface": "posts", "mode": "PUBLIC_BROWSER", "status": browser.get("status")},
+            {"surface": "shorts", "mode": "PUBLIC_BROWSER", "status": browser.get("status")},
+            {"surface": "transcripts", "mode": "PUBLIC_TRANSCRIPT + PUBLIC_BROWSER_FALLBACK", "status": "COMPLETE" if transcript_report.get("full_transcript_count") == len(video_ids) else "PARTIAL"},
+            {"surface": "private_analytics", "mode": "OWNER_AUTH_REQUIRED", "status": "UNAVAILABLE"},
         ],
-        "snapshots":[{"captured_at":captured,"inventory_count":len(video_ids),"video_count":len(videos),"quota":quota.summary()}],
-        "videos":sorted(videos,key=lambda x:x.get("snippet",{}).get("publishedAt") or "",reverse=True),
-        "posts":browser.get("posts",[]),"comments_summary":comments_summary,"playlists":playlists,"channel_sections":sections,"transcripts":browser.get("transcripts",[]),
-        "sources":source_register(),"claims":[],"metrics":[],"calculations":[],"risks":[],"hypotheses":[],"experiments":[],"recommendations":[],"benchmarks":[],"knowledge_gaps":[],"deltas":[],"policy_checks":[],
-        "decision_queue":{},"validation":{"status":"COLLECTION_COMPLETE_TO_ACCESSIBLE_BOUNDARY" if inv_cov.get("complete") and len(videos)==len(video_ids) else "PARTIAL_TO_ACCESSIBLE_BOUNDARY"},"executive_summary":{},"beginner_plan":beginner_plan(),
-        "analysis":{"performance":performance_metrics(videos),"comment_keywords":comment_keyword_summary(comments)},
-        "reproducibility":{"collector_version":"11.2-production","skill_sha256":sha256_file(skill),"credential_present":True,"credential_exposed":False,
-                           "credential_fingerprint":credential_fingerprint(key),"quota":quota.summary(),"api_request_count":api.request_count},
-        "self_audit":{"api_key_exposed":False,"inventory_complete":inv_cov.get("complete"),"video_details_complete":len(videos)==len(video_ids),
-                      "comment_complete_videos":sum(1 for x in comments_summary if x.get("complete")),"limitations":browser.get("limitations",[])}
+        "snapshots": [{
+            "captured_at": captured,
+            "inventory_count": len(video_ids),
+            "video_count": len(videos),
+            "quota": quota.summary(),
+            "transcript_audit": transcript_report,
+        }],
+        "videos": sorted(videos, key=lambda x: x.get("snippet", {}).get("publishedAt") or "", reverse=True),
+        "posts": browser.get("posts", []),
+        "comments_summary": comments_summary,
+        "playlists": playlists,
+        "channel_sections": sections,
+        "transcripts": list(transcript_cache.values()),
+        "transcript_audit": transcript_report,
+        "sources": final_sources,
+        "claims": [],
+        "metrics": [],
+        "calculations": [],
+        "risks": [],
+        "hypotheses": [],
+        "experiments": [],
+        "recommendations": [],
+        "benchmarks": [],
+        "knowledge_gaps": [],
+        "deltas": [],
+        "policy_checks": [],
+        "decision_queue": {},
+        "validation": {
+            "status": "COLLECTION_COMPLETE_TO_ACCESSIBLE_BOUNDARY"
+            if inv_cov.get("complete") and len(videos) == len(video_ids)
+            else "PARTIAL_TO_ACCESSIBLE_BOUNDARY"
+        },
+        "executive_summary": {},
+        "beginner_plan": beginner_plan(),
+        "analysis": {
+            "performance": performance_metrics(videos),
+            "comment_keywords": comment_keyword_summary(comments),
+            "transcript_audit": transcript_report,
+        },
+        "reproducibility": {
+            "collector_version": "11.3-production",
+            "transcript_engine": "youtube-transcript-api 1.2.x + public transcript UI fallback",
+            "skill_sha256": sha256_file(skill),
+            "credential_present": True,
+            "credential_exposed": False,
+            "credential_fingerprint": credential_fingerprint(key),
+            "quota": quota.summary(),
+            "api_request_count": api.request_count,
+            "full_transcript_text_persisted": False,
+        },
+        "self_audit": {
+            "api_key_exposed": False,
+            "inventory_complete": inv_cov.get("complete"),
+            "video_details_complete": len(videos) == len(video_ids),
+            "comment_complete_videos": sum(1 for x in comments_summary if x.get("complete")),
+            "transcript_attempted_videos": transcript_report.get("attempted_video_count"),
+            "full_transcript_videos": transcript_report.get("full_transcript_count"),
+            "transcript_full_text_persisted": False,
+            "limitations": browser.get("limitations", []) + (
+                ["Transcript coverage incomplete; affected videos remain low-confidence."]
+                if transcript_report.get("full_transcript_count") != len(video_ids) else []
+            ),
+        },
     }
-    write_artifacts(out,report,comments)
-    checkpoint.set("completed_at",captured); checkpoint.set("status","COMPLETED" if inv_cov.get("complete") else "PARTIAL")
-    print(json.dumps({"status":"SUCCESS","channel_id":channel_id,"videos":len(videos),"posts":len(report["posts"]),"comments":len(comments),"quota":quota.summary(),"api_key_exposed":False},indent=2))
-    return 0
 
+    # Build top-level claim registry after all video analyses exist.
+    report["claims"] = build_claim_registry(report["videos"])
+    write_artifacts(out, report, comments)
+    checkpoint.set("completed_at", captured)
+    checkpoint.set("status", "COMPLETED" if inv_cov.get("complete") else "PARTIAL")
+
+    print(json.dumps({
+        "status": "SUCCESS",
+        "channel_id": channel_id,
+        "videos": len(videos),
+        "posts": len(report["posts"]),
+        "comments": len(comments),
+        "full_transcripts": transcript_report.get("full_transcript_count"),
+        "transcript_attempted": transcript_report.get("attempted_video_count"),
+        "quota": quota.summary(),
+        "api_key_exposed": False,
+    }, indent=2))
+    return 0
 
 def beginner_plan() -> dict[str,Any]:
     return {"first_10_minutes":["Pick one audience","Find 3 relevant channels","Find 10 videos per channel","Identify 5 outliers","Write why they worked","Create 1 original idea"],
