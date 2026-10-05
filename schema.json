@@ -47,11 +47,11 @@
       "properties": {
         "methodology_version": {
           "type": "string",
-          "pattern": "^11\\.3"
+          "pattern": "^11\\.4"
         },
         "schema_version": {
           "type": "string",
-          "pattern": "^11\\.3"
+          "pattern": "^11\\.4"
         },
         "canonical_channel_url": {
           "type": "string",
