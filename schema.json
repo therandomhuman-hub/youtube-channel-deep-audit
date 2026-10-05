@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "youtube-channel-deep-audit-v11.5.schema.json",
+  "$id": "youtube-channel-deep-audit-v12.0.schema.json",
   "title": "YouTube Channel Deep Audit v11.5 Production Report",
   "type": "object",
   "additionalProperties": true,
@@ -47,11 +47,11 @@
       "properties": {
         "methodology_version": {
           "type": "string",
-          "pattern": "^11\\.5"
+          "pattern": "^12\\.0"
         },
         "schema_version": {
           "type": "string",
-          "pattern": "^11\\.5"
+          "pattern": "^12\\.0"
         },
         "canonical_channel_url": {
           "type": "string",
@@ -135,6 +135,26 @@
           },
           "contentDetails": {
             "type": "object"
+          },
+          "video_analysis": {
+            "type": "object",
+            "required": [
+              "original_evidence",
+              "decision",
+              "confidence",
+              "overall_beginner_rating"
+            ],
+            "properties": {
+              "original_evidence": {
+                "type": "object",
+                "required": ["video_id", "url", "title", "description", "evidence_boundary"],
+                "additionalProperties": true
+              },
+              "decision": {"type": "string"},
+              "confidence": {"type": "string"},
+              "overall_beginner_rating": {"type": "number", "minimum": 0, "maximum": 10}
+            },
+            "additionalProperties": true
           },
           "transcript_audit": {
             "type": "object",
