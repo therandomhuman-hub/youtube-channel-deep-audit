@@ -118,13 +118,27 @@ def _candidate_claims(text: str) -> list[dict[str, Any]]:
             summary = "Creator reports a personal result or outcome."
         if any(c.get("summary") == summary for c in claims):
             continue
+        requirements = []
+        if "REVENUE_OR_FINANCIAL" in categories:
+            requirements.append("independent revenue evidence with a defined time period and scope")
+        if "QUANTIFIED_RESULT" in categories:
+            requirements.append("independent source or reproducible calculation for the exact metric")
+        if "TIME_TO_RESULT" in categories:
+            requirements.append("dated before/after evidence showing the claimed time window")
+        if "REPLICATION_OR_POLICY_RISK" in categories:
+            requirements.append("current YouTube policy check plus an originality/reuse assessment")
+        if not requirements:
+            requirements.append("independent corroboration or a directly inspectable public artifact")
         claims.append(
             {
                 "summary": summary,
                 "categories": categories,
                 "status": "CREATOR_REPORTED",
                 "verification": "Creator statement detected in transcript; independent verification required.",
+                "verification_state": "NOT_INDEPENDENTLY_VERIFIED",
                 "evidence_excerpt": _excerpt(sentence),
+                "evidence_requirements": requirements,
+                "evidence_strength": "DIRECT_CREATOR_STATEMENT",
             }
         )
         if len(claims) >= MAX_CLAIMS:
@@ -266,6 +280,37 @@ def audit_video_transcript(video_id: str, languages: Iterable[str] = DEFAULT_LAN
         return base
 
 
+def build_claim_evidence_matrix(claims: list[dict[str, Any]], proof_signal_count: int, transcript_status: str) -> list[dict[str, Any]]:
+    """Translate transcript-detected claims into explicit evidence obligations.
+
+    A transcript is evidence that the creator said something. It is not evidence
+    that the underlying result is true. Independent verification therefore remains
+    a separate state.
+    """
+    matrix = []
+    for idx, claim in enumerate(claims[:MAX_CLAIMS], 1):
+        categories = claim.get("categories", []) or []
+        high_impact = any(
+            x in categories
+            for x in ("REVENUE_OR_FINANCIAL", "QUANTIFIED_RESULT", "TIME_TO_RESULT")
+        )
+        risk = "HIGH" if "REPLICATION_OR_POLICY_RISK" in categories else ("MEDIUM" if high_impact else "LOW")
+        matrix.append({
+            "claim_id": f"C{idx}",
+            "claim": claim.get("summary"),
+            "status": claim.get("status", "CREATOR_REPORTED"),
+            "verification_state": claim.get("verification_state", "NOT_INDEPENDENTLY_VERIFIED"),
+            "evidence_strength": claim.get("evidence_strength", "DIRECT_CREATOR_STATEMENT"),
+            "independent_verification": "REQUIRED",
+            "high_impact": high_impact,
+            "risk": risk,
+            "evidence_requirements": claim.get("evidence_requirements", []),
+            "transcript_status": transcript_status,
+            "proof_signal_count": proof_signal_count,
+        })
+    return matrix
+
+
 def audit_learning(
     *,
     title: str,
@@ -288,6 +333,7 @@ def audit_learning(
     jargon = int(transcript.get("jargon_signal_count", 0) or 0)
     quantified = int(transcript.get("quantified_claim_count", 0) or 0)
     claims = transcript.get("claims", []) or []
+    claim_evidence_matrix = build_claim_evidence_matrix(claims, proof, status)
 
     if not full:
         return {
@@ -304,6 +350,8 @@ def audit_learning(
             "decision": "RESEARCH MORE",
             "learning_mode": "DO_NOT_COPY_FROM_METADATA",
             "claim_evidence_gap": quantified + len(claims),
+            "claim_evidence_matrix": claim_evidence_matrix,
+            "material_claims_require_independent_verification": bool(claims),
             "beginner_takeaway": "Do not treat title/description promises as instructions. Re-audit after obtaining the transcript.",
             "audit_basis": ["public title", "public description", "transcript unavailable or incomplete"],
         }
@@ -415,6 +463,8 @@ def audit_learning(
         "decision": decision,
         "learning_mode": learning_mode,
         "claim_evidence_gap": quantified if proof else quantified + len(claims),
+        "claim_evidence_matrix": claim_evidence_matrix,
+        "material_claims_require_independent_verification": bool(claims),
         "beginner_takeaway": takeaway,
         "audit_basis": [
             "public title",
