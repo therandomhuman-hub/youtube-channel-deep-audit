@@ -22,6 +22,7 @@ class ValidatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             report=self.base_report()
+            report["videos"][0]["transcript_audit"]={"status":"NO_TRANSCRIPT_FOUND","text_retained":False}
             for name,obj in [("audit.json",report),("schema.json",{"type":"object","required":[],"properties":{}})]:
                 (root/name).write_text(json.dumps(obj),encoding="utf-8")
             (root/"audit.html").write_text("<!doctype html><html lang='en'><head></head><body><h1>x</h1><script>const a='AIzaAAAAAAAAAAAAAAAAAAAAAAA';</script></body></html>",encoding="utf-8")
