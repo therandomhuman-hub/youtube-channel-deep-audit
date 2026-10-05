@@ -16,6 +16,10 @@ def sha256(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
+def release_allowed(validation: dict) -> bool:
+    """Only a clean validator PASS may produce a RELEASED artifact."""
+    return validation.get("status") == "PASS"
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: build_release.py PACKAGE_DIR", file=sys.stderr)
@@ -28,6 +32,10 @@ def main() -> int:
     if proc.returncode != 0:
         return proc.returncode
     validation=json.loads(proc.stdout)
+    if not release_allowed(validation):
+        status = validation.get("status", "UNKNOWN")
+        print(f"release blocked: validator status={status}", file=sys.stderr)
+        return 1
     files={}
     for p in sorted(root.rglob("*")):
         if p.is_file() and p.name not in {"release_validation.json","release_manifest.json","checkpoint.json"}:
