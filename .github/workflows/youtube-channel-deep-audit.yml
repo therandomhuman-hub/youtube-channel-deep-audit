@@ -1,48 +1,143 @@
 name: YouTube Channel Deep Audit
+
 on:
   workflow_dispatch:
     inputs:
       channel_url:
-        description: "Public YouTube channel URL (/channel/UC... or resolved URL)"
+        description: "One public YouTube channel URL or @handle"
         required: true
         type: string
-      run_id:
-        description: "Optional audit run identifier"
+      skip_browser:
+        description: "Skip public UI collection"
         required: false
-        default: ""
-        type: string
+        default: false
+        type: boolean
+      skip_comments:
+        description: "Skip exhaustive public comments"
+        required: false
+        default: false
+        type: boolean
+  issues:
+    types: [opened, edited]
+
+concurrency:
+  group: youtube-channel-deep-audit-production
+  cancel-in-progress: false
 
 permissions:
   contents: read
   actions: read
+  issues: write
 
 jobs:
   audit:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.user.login == 'therandomhuman-hub' && startsWith(github.event.issue.title, '[youtube-audit]'))
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     env:
       YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
       PYTHONUNBUFFERED: "1"
+      DISPATCH_URL: ${{ github.event.inputs.channel_url }}
+      ISSUE_BODY: ${{ github.event.issue.body }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout production runtime
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install runtime
+          cache: pip
+
+      - name: Install dependencies
         run: python -m pip install -r requirements.txt
-      - name: Run audit
-        run: python youtube_audit.py --channel-url "${{ inputs.channel_url }}" --out audit
-      - name: Validate no secret leakage
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Resolve exactly one channel
         shell: bash
         run: |
           set -euo pipefail
-          if grep -RInE 'AIza[0-9A-Za-z_-]{20,}|YOUTUBE_API_KEY=.*[A-Za-z0-9_-]{20,}' audit .github --exclude='*.yml' ; then
-            echo "Potential credential leakage detected"
+          mkdir -p audit
+          python runtime/request.py \
+            --dispatch-url "$DISPATCH_URL" \
+            --issue-body "$ISSUE_BODY" \
+            > audit/channel_url.txt
+
+      - name: Verify API secret is available without revealing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$YOUTUBE_API_KEY"
+          printf '%s\\n' 'credential_present=true' > audit/credential_status.txt
+
+      - name: Run production collector
+        shell: bash
+        run: |
+          set +e
+          FLAGS=""
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.skip_browser }}" == "true" ]]; then
+            FLAGS="$FLAGS --skip-browser"
+          fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.skip_comments }}" == "true" ]]; then
+            FLAGS="$FLAGS --skip-comments"
+          fi
+          python youtube_audit.py \
+            --skill skill.md \
+            --channel "$(cat audit/channel_url.txt)" \
+            --output audit \
+            $FLAGS > audit/collector.log 2>&1
+          code=$?
+          printf '%s\\n' "$code" > audit/collector_exit_code.txt
+          exit 0
+
+      - name: Validate release package
+        shell: bash
+        run: |
+          set +e
+          python runtime/validate.py audit > audit/validation.json 2>&1
+          code=$?
+          printf '%s\\n' "$code" > audit/validator_exit_code.txt
+          exit 0
+
+      - name: Final release gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          collector_code="$(cat audit/collector_exit_code.txt)"
+          validator_code="$(cat audit/validator_exit_code.txt)"
+          if [[ "$collector_code" != "0" || "$validator_code" != "0" ]]; then
+            echo "RELEASE BLOCKED"
+            echo "collector=$collector_code validator=$validator_code"
             exit 1
           fi
-      - name: Upload audit artifacts
+          printf '%s\\n' 'RELEASED=true' > audit/release_status.txt
+
+      - name: Upload audit package
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: youtube-audit-${{ github.run_id }}
+          name: youtube-channel-deep-audit-${{ github.run_id }}
           path: audit/
-          retention-days: 14
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Comment result on audit request
+        if: always() && github.event_name == 'issues'
+        shell: bash
+        run: |
+          status="BLOCKED/FAILED"
+          if [[ -f audit/release_status.txt ]]; then status="RELEASED"; fi
+          gh issue comment "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --body "## YouTube Channel Deep Audit
+
+**Status:** $status
+**Run:** $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+**Artifact:** youtube-channel-deep-audit-$GITHUB_RUN_ID
+
+The API credential is stored only as the GitHub Actions secret \`YOUTUBE_API_KEY\` and is not included in the audit artifacts."
