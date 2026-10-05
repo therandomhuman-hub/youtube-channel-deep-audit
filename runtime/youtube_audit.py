@@ -497,6 +497,125 @@ def comment_keyword_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
     return {term: blob.count(term) for term in terms}
 
 
+
+def _youtube_player_response(page: Any) -> dict[str, Any] | None:
+    """Extract ytInitialPlayerResponse from a public YouTube watch page."""
+    scripts = page.locator("script").all_text_contents()
+    decoder = json.JSONDecoder()
+    for text_value in scripts:
+        if "ytInitialPlayerResponse" not in text_value:
+            continue
+        m = re.search(r"ytInitialPlayerResponse\s*=\s*", text_value)
+        if not m:
+            continue
+        start = text_value.find("{", m.end())
+        if start < 0:
+            continue
+        try:
+            obj, _ = decoder.raw_decode(text_value[start:])
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            continue
+    # Some pages expose the response in a script object under ytInitialData.
+    # Do not guess caption tracks from arbitrary text.
+    return None
+
+
+def _public_caption_track(page: Any, video_id: str) -> dict[str, Any] | None:
+    response = _youtube_player_response(page)
+    if not response:
+        return None
+    tracks = (
+        response.get("captions", {})
+        .get("playerCaptionsTracklistRenderer", {})
+        .get("captionTracks", [])
+    )
+    if not tracks:
+        return None
+
+    preferred = {"en": 0, "en-US": 1, "en-GB": 2, "en-IN": 3}
+    ordered = sorted(
+        tracks,
+        key=lambda x: (
+            0 if x.get("languageCode") in preferred else 1,
+            0 if not x.get("kind") else 1,
+            preferred.get(x.get("languageCode"), 99),
+        ),
+    )
+    track = ordered[0] if ordered else None
+    if not track or not track.get("baseUrl"):
+        return None
+
+    base_url = track["baseUrl"]
+    try:
+        response_obj = page.request.get(base_url, timeout=30000)
+        body = response_obj.body().decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+    snippets = []
+    if body.lstrip().startswith("{"):
+        try:
+            payload = json.loads(body)
+            events = payload.get("events", [])
+            for event in events:
+                segs = event.get("segs") or []
+                text = "".join(str(seg.get("utf8", "")) for seg in segs).strip()
+                if text:
+                    snippets.append({
+                        "text": re.sub(r"\s+", " ", text),
+                        "start": float(event.get("tStartMs", 0)) / 1000.0,
+                        "duration": float(event.get("dDurationMs", 0)) / 1000.0,
+                    })
+        except Exception:
+            snippets = []
+    if not snippets:
+        try:
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(body)
+            for node in root.findall(".//text"):
+                text = "".join(node.itertext()).strip()
+                if not text:
+                    continue
+                try:
+                    start = float(node.attrib.get("start", 0) or 0)
+                except Exception:
+                    start = 0.0
+                try:
+                    duration = float(node.attrib.get("dur", 0) or 0)
+                except Exception:
+                    duration = 0.0
+                snippets.append({
+                    "text": re.sub(r"\s+", " ", text),
+                    "start": start,
+                    "duration": duration,
+                })
+        except Exception:
+            snippets = []
+
+    if not snippets:
+        return None
+
+    return {
+        "video_id": video_id,
+        "status": "FULL_TRANSCRIPT_AVAILABLE",
+        "source": "YOUTUBE_PUBLIC_CAPTION_TRACK",
+        "source_url": f"https://www.youtube.com/watch?v={video_id}",
+        "language": track.get("name", {}).get("simpleText") if isinstance(track.get("name"), dict) else None,
+        "language_code": track.get("languageCode"),
+        "is_generated": track.get("kind") == "asr",
+        "available_tracks": [
+            {
+                "language": x.get("languageName") or x.get("name"),
+                "language_code": x.get("languageCode"),
+                "is_generated": x.get("kind") == "asr",
+            }
+            for x in tracks
+        ],
+        "_snippets": snippets,
+    }
+
 def browser_collect(
     channel_url: str,
     video_ids: list[str],
@@ -599,33 +718,56 @@ def browser_collect(
                     "text_retained": False,
                 }
                 try:
-                    page.goto(f"https://www.youtube.com/watch?v={vid}", wait_until="domcontentloaded")
-                    buttons = page.locator(
-                        'button[aria-label*="transcript" i], '
-                        'tp-yt-paper-button[aria-label*="transcript" i], '
-                        'ytd-video-description-transcript-section-renderer button'
+                    page.goto(
+                        f"https://www.youtube.com/watch?v={vid}",
+                        wait_until="domcontentloaded",
                     )
-                    if buttons.count() == 0:
-                        item["status"] = "NOT_DETECTED"
-                    else:
-                        buttons.first.click()
-                        page.wait_for_timeout(750)
-                        segments = page.locator("ytd-transcript-segment-renderer").evaluate_all(
-                            "els => els.map(e => ({"
-                            "text: (e.innerText || e.textContent || '').trim(),"
-                            "start: 0,"
-                            "duration: 0"
-                            "}))"
+                    page.wait_for_timeout(500)
+
+                    # First-party caption tracks embedded in the public player response.
+                    cap = _public_caption_track(page, vid)
+                    if cap:
+                        snippets = cap.pop("_snippets")
+                        item = make_transcript_record(
+                            vid,
+                            snippets,
+                            source=cap.pop("source", "YOUTUBE_PUBLIC_CAPTION_TRACK"),
+                            language=cap.pop("language", None),
+                            language_code=cap.pop("language_code", None),
+                            is_generated=cap.pop("is_generated", None),
                         )
-                        if segments:
-                            item = make_transcript_record(
-                                vid,
-                                segments,
-                                source="YOUTUBE_PUBLIC_TRANSCRIPT_UI",
-                            )
-                            item["captured_at"] = utc_now()
+                        item.update(cap)
+                        item["captured_at"] = utc_now()
+                    else:
+                        # UI fallback: detect transcript controls by label/text, not only aria attributes.
+                        locators = [
+                            page.locator('button[aria-label*="transcript" i]'),
+                            page.locator('tp-yt-paper-button[aria-label*="transcript" i]'),
+                            page.locator("ytd-video-description-transcript-section-renderer button"),
+                            page.get_by_text("Show transcript", exact=True),
+                        ]
+                        button = None
+                        for locator in locators:
+                            if locator.count():
+                                button = locator.first
+                                break
+                        if button is None:
+                            item["status"] = "NOT_DETECTED"
                         else:
-                            item["status"] = "TRANSCRIPT_PANEL_NO_SEGMENTS"
+                            button.click(timeout=10000)
+                            page.wait_for_timeout(750)
+                            segments = page.locator("ytd-transcript-segment-renderer").evaluate_all(
+                                "els => els.map(e => ({text: (e.innerText || e.textContent || '').trim(), start: 0, duration: 0}))"
+                            )
+                            if segments:
+                                item = make_transcript_record(
+                                    vid,
+                                    segments,
+                                    source="YOUTUBE_PUBLIC_TRANSCRIPT_UI",
+                                )
+                                item["captured_at"] = utc_now()
+                            else:
+                                item["status"] = "TRANSCRIPT_PANEL_NO_SEGMENTS"
                 except Exception as exc:
                     item["status"] = "UNAVAILABLE"
                     item["error"] = safe_text(exc)[:500]
