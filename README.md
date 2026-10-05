@@ -1,23 +1,70 @@
 # YouTube Channel Deep Audit
 
-Production GitHub Actions runner for the canonical YouTube Channel Deep Audit skill.
+Production GitHub Actions execution layer for the canonical v11.2 audit skill.
 
 ## One-time setup
 
-Create this repository secret:
+This repository must contain the GitHub Actions repository secret:
 
 `YOUTUBE_API_KEY`
 
-GitHub Actions injects it into the runner as `YOUTUBE_API_KEY`. The key is never committed, echoed, or written to audit artifacts.
+The value is used only inside the runner. It is never a ChatGPT input, committed file, issue body, report field, HTML value, artifact, or log value.
 
-## Run an audit
+## Normal ChatGPT workflow
 
-Open **Actions → YouTube Channel Deep Audit → Run workflow** and provide the public YouTube channel URL.
+You only provide:
 
-The workflow checks out the repository, installs the runtime dependency, runs the audit with the repository secret, scans artifacts for credential-like leakage, and uploads the results as a workflow artifact.
+1. The canonical audit skill file.
+2. One YouTube channel URL.
 
-## Current boundary
+The ChatGPT GitHub connection can create an audit request issue titled:
 
-The current collector requires a canonical `/channel/UC...` URL. Resolve a YouTube @handle to its canonical channel URL before running until handle-resolution is added.
+`[youtube-audit] https://www.youtube.com/@example`
 
-Private/owner-only YouTube Analytics data is not collected by an API key.
+with the same channel URL in the body and no secret.
+
+The issue event triggers the production workflow automatically. The runner reads `secrets.YOUTUBE_API_KEY`, resolves the channel, collects the public API/web evidence, validates the release package, and comments the run/artifact link on the issue.
+
+## Manual workflow
+
+Open **Actions → YouTube Channel Deep Audit → Run workflow** and enter one public channel URL or @handle.
+
+## Collection
+
+The runtime collects to the legitimately accessible public boundary:
+
+- channel metadata
+- exhaustive uploads playlist inventory with pagination
+- video metadata/statistics
+- public playlists
+- channel sections
+- public comments and separately paginated replies
+- public Shorts surface
+- public Posts surface
+- transcript availability metadata through public UI where available
+- public description/resource links
+- reproducibility/quota/coverage records
+- standalone interactive HTML
+- JSON/CSV evidence artifacts
+
+Private owner Analytics are explicitly unavailable unless owner authorization is separately configured.
+
+## Release gate
+
+A run is released only when the collector and validator succeed and the generated package passes:
+
+- schema/data checks
+- duplicate checks
+- secret scanning
+- HTML checks
+- CSV reconciliation
+- artifact hash validation
+- credential exposure checks
+
+A partial or blocked collection is never represented as complete.
+
+## Development
+
+`python -m unittest discover -s tests -v`
+
+`python -m compileall -q runtime youtube_audit.py tests`
