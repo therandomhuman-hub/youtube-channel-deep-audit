@@ -270,34 +270,43 @@ def _hosted_transcript_record(video_id: str, payload: Any, *, source_url: str, s
 
 
 def _fetch_public_hosted_transcript(video_id: str, languages: Iterable[str], expected_duration_seconds: float | None = None) -> dict[str, Any] | None:
-    """Try public no-key transcript mirrors after YouTube-native methods are blocked."""
+    """Try public no-key transcript mirrors after YouTube-native methods are blocked.
+
+    Provider responses are treated as third-party public evidence. When a
+    transcript fails the broad duration/word-density sanity check, the second
+    provider is tried before a questionable result is accepted.
+    """
     lang_list = [str(x) for x in languages if x]
-    lang = next((x for x in lang_list if x.lower().split("-")[0] == "en"), "en")
+    lang = next((x for x in lang_list if x.lower().split('-')[0] == 'en'), 'en')
     candidates = [
-        ("PUBLIC_THIRD_PARTY_YOUTUBE_TRANSCRIPT_AI", f"https://youtube-transcript.ai/transcript/{video_id}.txt?lang={lang}", "text"),
-        ("PUBLIC_THIRD_PARTY_FREETRANSCRIPTAPI", f"https://api.freetranscriptapi.com/v1/transcript?video_url={video_id}&lang={lang}", "json"),
+        ('PUBLIC_THIRD_PARTY_YOUTUBE_TRANSCRIPT_AI', f'https://youtube-transcript.ai/transcript/{video_id}.txt?lang={lang}', 'text'),
+        ('PUBLIC_THIRD_PARTY_FREETRANSCRIPTAPI', f'https://api.freetranscriptapi.com/v1/transcript?video_url={video_id}&lang={lang}', 'json'),
     ]
+    accepted = []
     for name, url, kind in candidates:
         try:
-            req = Request(url, headers={"Accept": "application/json,text/plain;q=0.9,*/*;q=0.8", "User-Agent": "YouTubeChannelDeepAudit/11.5-public-transcript-fallback"})
-            with urlopen(req, timeout=20) as resp:
+            req = Request(url, headers={'Accept': 'application/json,text/plain;q=0.9,*/*;q=0.8', 'User-Agent': 'YouTubeChannelDeepAudit/11.5-public-transcript-fallback'})
+            with urlopen(req, timeout=15) as resp:
                 raw = resp.read(4_000_000)
-                body = raw.decode("utf-8", errors="replace")
+                body = raw.decode('utf-8', errors='replace')
                 payload = json.loads(body) if kind == 'json' else body
                 record = _hosted_transcript_record(video_id, payload, source_url=url, source_name=name)
                 if record:
                     record = _apply_transcript_sanity(record, expected_duration_seconds)
-                    record["source_class"] = "THIRD_PARTY_PUBLIC"
-                    record["independent_verification"] = "NOT_PERFORMED"
-                    record["provider"] = name
-                    return record
+                    record['source_class'] = 'THIRD_PARTY_PUBLIC'
+                    record['independent_verification'] = 'NOT_PERFORMED'
+                    record['provider'] = name
+                    accepted.append(record)
+                    if record.get('quality_grade') == 'PLAUSIBLE':
+                        return record
         except (HTTPError, URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
             continue
         except Exception:
             continue
+    if accepted:
+        accepted.sort(key=lambda x: abs(float((x.get('transcript_sanity') or {}).get('words_per_minute', 160) or 160) - 160))
+        return accepted[0]
     return None
-
-
 def _apply_transcript_sanity(record: dict[str, Any], expected_duration_seconds: float | None) -> dict[str, Any]:
     if record.get('status') != 'FULL_TRANSCRIPT_AVAILABLE' or not expected_duration_seconds:
         return record
