@@ -425,7 +425,7 @@ def browser_collect(channel_url: str, video_ids: list[str], transcript_limit: in
             try:
                 page.goto(base+"/posts", wait_until="domcontentloaded")
                 progressive_scroll(page,max_scrolls)
-                anchors=page.locator('a[href*="/post/"]').evaluate_all("els => els.map(e => ({href:e.href,text:(e.innerText||e.textContent||"").trim()}))")
+                anchors=page.locator('a[href*="/post/"]').evaluate_all("(els) => els.map((e) => ({href: e.href, text: (e.innerText || e.textContent || '').trim()}))")
                 seen=set()
                 for a in anchors:
                     href=a.get("href","")
