@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from runtime.youtube_audit import METHOD_COSTS, SEARCH_CALL_BUDGET, Quota, Checkpoint, extract_channel_ref, plausible_key
-from runtime.transcript_audit import make_transcript_record, audit_learning
+from runtime.transcript_audit import make_transcript_record, audit_learning, build_claim_evidence_matrix
 
 class RuntimeTests(unittest.TestCase):
     def test_quota_costs(self):
@@ -75,6 +75,25 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue(q.charge("channels.list",1))
             q2=Quota(cp,9000)
             self.assertEqual(q2.used,1)
+
+    def test_claim_evidence_matrix_never_treats_transcript_as_truth(self):
+        rec = make_transcript_record(
+            "abc123456",
+            [{"text":"I made $75,000 in 90 days and got monetized in 7 days. First, create original videos.", "start":0, "duration":6}],
+            source="TEST",
+            language="English",
+            language_code="en",
+            is_generated=False,
+        )
+        matrix = build_claim_evidence_matrix(rec["claims"], rec["proof_signal_count"], rec["status"])
+        self.assertTrue(matrix)
+        self.assertTrue(all(x["independent_verification"] == "REQUIRED" for x in matrix))
+        self.assertTrue(any(x["high_impact"] for x in matrix))
+        self.assertTrue(all(x["verification_state"] == "NOT_INDEPENDENTLY_VERIFIED" for x in matrix))
+
+    def test_embed_fallback_is_part_of_production_runtime(self):
+        from runtime.youtube_audit import _embed_transcript_fallback
+        self.assertTrue(callable(_embed_transcript_fallback))
 
 if __name__=="__main__":
     unittest.main()
