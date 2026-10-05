@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 API_ROOT = "https://www.googleapis.com/youtube/v3"
-UA = "YouTubeChannelDeepAudit/11.2-production"
+UA = "YouTubeChannelDeepAudit/11.4-production"
 
 # Google currently documents 1-unit costs for these read methods; search.list has
 # a separate 100-calls/day bucket and each call costs 1 unit in that bucket.
@@ -649,6 +649,29 @@ def _public_caption_track(page: Any, video_id: str) -> dict[str, Any] | None:
     }
 
 
+def _embed_transcript_fallback(page: Any, video_id: str) -> dict[str, Any] | None:
+    """Retry public caption discovery through YouTube's supported embedded player.
+
+    This remains public YouTube playback/caption data and does not use owner
+    credentials or the authenticated captions API.
+    """
+    try:
+        embed_url = (
+            f"https://www.youtube.com/embed/{video_id}"
+            "?hl=en&cc_lang_pref=en&cc_load_policy=1&playsinline=1"
+        )
+        page.goto(embed_url, wait_until="domcontentloaded")
+        page.wait_for_timeout(1200)
+        item = _public_caption_track(page, video_id)
+        if item:
+            item["source"] = "YOUTUBE_PUBLIC_EMBED_CAPTION_TRACK"
+            item["source_url"] = embed_url
+            return item
+    except Exception:
+        pass
+    return None
+
+
 def browser_collect(
     channel_url: str,
     video_ids: list[str],
@@ -828,17 +851,22 @@ def browser_collect(
                         item["captured_at"] = utc_now()
                     else:
                         cap = _public_caption_track(page, vid)
+                        if not cap:
+                            cap = _embed_transcript_fallback(page, vid)
                         if cap:
                             snippets = cap.pop("_snippets")
+                            make_source = cap.pop("source", "YOUTUBE_PUBLIC_CAPTION_TRACK")
+                            make_url = cap.pop("source_url", f"https://www.youtube.com/watch?v={vid}")
                             item = make_transcript_record(
                                 vid,
                                 snippets,
-                                source=cap.pop("source", "YOUTUBE_PUBLIC_CAPTION_TRACK"),
+                                source=make_source,
                                 language=cap.pop("language", None),
                                 language_code=cap.pop("language_code", None),
                                 is_generated=cap.pop("is_generated", None),
                             )
                             item.update(cap)
+                            item["source_url"] = make_url
                             item["captured_at"] = utc_now()
                         else:
                             item["status"] = "NOT_DETECTED"
@@ -976,7 +1004,7 @@ def transcript_summary(transcripts: dict[str, dict[str, Any]], total_videos: int
         "not_attempted_count": not_attempted,
         "coverage_percent": round((len(records) / total_videos) * 100, 1) if total_videos else 0,
         "full_coverage_percent": round((full / total_videos) * 100, 1) if total_videos else 0,
-        "rule": "Transcript-level scoring is high-confidence only when a usable public transcript was actually retrieved and analyzed. Otherwise the video is explicitly low-confidence metadata/partial.",
+        "rule": "Every discovered video is targeted by default. Transcript-level scoring is high-confidence only when a usable public transcript was actually retrieved and analyzed. Otherwise the video is explicitly low-confidence metadata/partial. Transcript presence proves only that text was retrieved, not that creator claims are true.",
     }
 
 
@@ -1139,9 +1167,9 @@ def write_artifacts(out: Path, report: dict[str, Any], comments: list[dict[str, 
         raise RuntimeError("Canonical schema.json is missing from the repository.")
 
     (out / "config.yaml").write_text(
-        "version: 11.3-production\nmode: DEEP\npublic_only: true\n"
+        "version: 11.4-production\nmode: DEEP\npublic_only: true\n"
         "credential_source: GITHUB_ACTIONS:YOUTUBE_API_KEY\n"
-        "transcript_engine: youtube-transcript-api+public-ui\n"
+        "transcript_engine: youtube-transcript-api+public-ui+public-embed-caption-fallback\n"
         "transcript_full_text_persisted: false\n",
         encoding="utf-8",
     )
@@ -1238,7 +1266,7 @@ def write_artifacts(out: Path, report: dict[str, Any], comments: list[dict[str, 
     (out / "video_analysis.md").write_text("\n".join(lines), encoding="utf-8")
     render_html(report, out / "audit.html")
 
-    manifest = {"schema_version": "11.3.0", "generated_at": utc_now(), "files": {}}
+    manifest = {"schema_version": "11.4.0", "generated_at": utc_now(), "files": {}}
     for p in sorted(out.iterdir()):
         if p.is_file() and p.name not in {"release_manifest.json", "checkpoint.json"}:
             manifest["files"][p.name] = sha256_file(p)
@@ -1279,8 +1307,8 @@ def run(args: argparse.Namespace) -> int:
         report = {
             "metadata": {
                 "audit_id": "blocked",
-                "methodology_version": "11.3-production",
-                "schema_version": "11.3.0",
+                "methodology_version": "11.4-production",
+                "schema_version": "11.4.0",
                 "started_at": started,
                 "completed_at": utc_now(),
                 "canonical_channel_url": args.channel,
@@ -1373,7 +1401,7 @@ def run(args: argparse.Namespace) -> int:
     if not isinstance(transcript_cache, dict):
         transcript_cache = {}
 
-    transcript_target_ids = video_ids[:max(0, args.transcript_limit)]
+    transcript_target_ids = video_ids if args.transcript_limit <= 0 else video_ids[:args.transcript_limit]
     for vid in transcript_target_ids:
         record = transcript_cache.get(vid)
         if not record or record.get("status") in {"TRANSCRIPT_FETCH_ERROR", "TRANSCRIPT_REQUEST_BLOCKED", "NETWORK_ERROR"}:
@@ -1422,6 +1450,18 @@ def run(args: argparse.Namespace) -> int:
         v["transcript_status"] = t.get("status", "NOT_CHECKED")
         v["transcript_audit"] = t
         v["_audit_hints"] = {"resources": resource_hints(desc), "keywords": keyword_hints(desc)}
+        if t.get("status") == "FULL_TRANSCRIPT_AVAILABLE":
+            duration = float((v.get("contentDetails") or {}).get("durationSeconds") or 0)
+            words = int(t.get("word_count") or 0)
+            if duration > 120 and words:
+                wpm = words / (duration / 60.0)
+                t["transcript_sanity"] = {
+                    "words_per_minute": round(wpm, 1),
+                    "plausible": 90 <= wpm <= 220,
+                    "rule": "Broad completeness sanity check only; it does not prove transcript accuracy."
+                }
+                if not (90 <= wpm <= 220):
+                    t["quality_warning"] = "Transcript word density is outside the broad 90–220 wpm sanity band."
 
     # -------- Exhaustive public comments --------
     comments_summary = checkpoint.get("comments_summary", [])
@@ -1520,8 +1560,8 @@ def run(args: argparse.Namespace) -> int:
     report = {
         "metadata": {
             "audit_id": f"{channel_id}-{captured.replace(':','').replace('+00:00','Z')}",
-            "methodology_version": "11.3-production",
-            "schema_version": "11.3.0",
+            "methodology_version": "11.4-production",
+            "schema_version": "11.4.0",
             "started_at": started,
             "completed_at": captured,
             "canonical_channel_url": canonical,
@@ -1599,7 +1639,7 @@ def run(args: argparse.Namespace) -> int:
             "transcript_audit": transcript_report,
         },
         "reproducibility": {
-            "collector_version": "11.3-production",
+            "collector_version": "11.4-production",
             "transcript_engine": "youtube-transcript-api 1.2.x + public transcript UI fallback",
             "skill_sha256": sha256_file(skill),
             "credential_present": True,
@@ -1608,6 +1648,8 @@ def run(args: argparse.Namespace) -> int:
             "quota": quota.summary(),
             "api_request_count": api.request_count,
             "full_transcript_text_persisted": False,
+            "high_confidence_requires_full_transcript": True,
+            "creator_claims_are_not_verified_by_transcript_presence": True,
         },
         "self_audit": {
             "api_key_exposed": False,
@@ -1617,6 +1659,7 @@ def run(args: argparse.Namespace) -> int:
             "transcript_attempted_videos": transcript_report.get("attempted_video_count"),
             "full_transcript_videos": transcript_report.get("full_transcript_count"),
             "transcript_full_text_persisted": False,
+            "evidence_policy": "Transcript establishes what was said, not whether the claim is true.",
             "limitations": browser.get("limitations", []) + (
                 ["Transcript coverage incomplete; affected videos remain low-confidence."]
                 if transcript_report.get("full_transcript_count") != len(video_ids) else []
@@ -1657,7 +1700,7 @@ def main() -> int:
     ap.add_argument("--retries",type=int,default=2)
     ap.add_argument("--max-pages",type=int,default=None)
     ap.add_argument("--comment-max-pages",type=int,default=None)
-    ap.add_argument("--transcript-limit",type=int,default=100)
+    ap.add_argument("--transcript-limit",type=int,default=0, help="0 = all discovered videos; positive value caps transcript attempts")
     ap.add_argument("--max-scrolls",type=int,default=100)
     ap.add_argument("--skip-browser",action="store_true")
     ap.add_argument("--skip-comments",action="store_true")
