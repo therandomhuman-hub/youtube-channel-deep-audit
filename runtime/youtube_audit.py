@@ -652,6 +652,49 @@ def progressive_scroll(page: Any, max_scrolls: int) -> None:
         previous=height
 
 
+
+def live_policy_checks() -> list[dict[str, Any]]:
+    """Fetch a compact, current policy snapshot from official YouTube pages."""
+    policy_urls = {
+        "YPP_MONETIZATION": "https://support.google.com/youtube/answer/1311392",
+        "PAID_PROMOTIONS": "https://support.google.com/youtube/answer/154235",
+        "AI_DISCLOSURE": "https://support.google.com/youtube/answer/14328491",
+        "SHORTS": "https://support.google.com/youtube/answer/15424877",
+    }
+    keywords = (
+        "original", "authentic", "reused", "mass-produced", "repetitive",
+        "altered", "synthetic", "disclose", "paid promotion", "shorts",
+    )
+    out: list[dict[str, Any]] = []
+    for key, url in policy_urls.items():
+        record = {
+            "policy_id": key,
+            "url": url,
+            "status": "NOT_CHECKED",
+            "captured_at": utc_now(),
+        }
+        try:
+            req = Request(url, headers={"Accept": "text/html", "User-Agent": UA})
+            with urlopen(req, timeout=20) as resp:
+                raw = resp.read(3_000_000)
+                body = raw.decode("utf-8", errors="replace")
+                record["status"] = "LIVE_FETCHED"
+                record["http_status"] = getattr(resp, "status", 200)
+                record["content_sha256"] = hashlib.sha256(body.encode("utf-8")).hexdigest()
+                title_match = re.search(r"<title[^>]*>(.*?)</title>", body, re.I | re.S)
+                record["page_title"] = re.sub(r"\\s+", " ", html.unescape(title_match.group(1))).strip()[:300] if title_match else None
+                low = re.sub(r"<[^>]+>", " ", body).lower()
+                record["matched_keywords"] = [kw for kw in keywords if kw in low]
+        except HTTPError as exc:
+            record["status"] = "HTTP_ERROR"
+            record["http_status"] = exc.code
+            record["error"] = safe_text(exc)[:300]
+        except Exception as exc:
+            record["status"] = "FETCH_ERROR"
+            record["error"] = safe_text(exc)[:300]
+        out.append(record)
+    return out
+
 def source_register(video_ids: list[str] | None = None, transcript_map: dict[str, dict[str, Any]] | None = None) -> list[dict[str, str]]:
     urls = {
         "SRC-YT-CHANNELS": "https://developers.google.com/youtube/v3/docs/channels",
@@ -1253,6 +1296,8 @@ def run(args: argparse.Namespace) -> int:
         t = transcript_cache.get(v.get("id"), {"video_id": v.get("id"), "status": "NOT_ATTEMPTED", "text_retained": False})
         v["video_analysis"] = per_video_analysis(v, comments, t)
 
+    policy_checks = live_policy_checks()
+
     captured = utc_now()
     transcript_report = transcript_summary(transcript_cache, len(video_ids))
     final_sources = source_register(video_ids, transcript_cache)
@@ -1322,7 +1367,7 @@ def run(args: argparse.Namespace) -> int:
         "benchmarks": [],
         "knowledge_gaps": [],
         "deltas": [],
-        "policy_checks": [],
+        "policy_checks": policy_checks,
         "decision_queue": {},
         "validation": {
             "status": "COLLECTION_COMPLETE_TO_ACCESSIBLE_BOUNDARY"
@@ -1333,6 +1378,7 @@ def run(args: argparse.Namespace) -> int:
         "beginner_plan": beginner_plan(),
         "analysis": {
             "performance": performance_metrics(videos),
+            "policy_baseline": policy_checks,
             "comment_keywords": comment_keyword_summary(comments),
             "transcript_audit": transcript_report,
         },
