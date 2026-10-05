@@ -1,4 +1,4 @@
-version: 11.3-production
+version: 11.4-production
 mode: DEEP
 public_only: true
 exhaustive_upload_inventory: true
@@ -12,5 +12,7 @@ general_quota_run_budget: 9000
 transcript_full_text_persisted: false
 transcript_languages: en,en-US,en-GB,en-IN
 transcript_primary: youtube-transcript-api
-transcript_fallback: public_youtube_transcript_ui
+transcript_fallback: public_youtube_transcript_ui + public_embed_caption_track
 search_calls_daily_budget: 100
+transcript_exhaustive_default: true
+claim_verification: transcript_proves_statement_only
