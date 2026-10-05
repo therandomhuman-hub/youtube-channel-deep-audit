@@ -1,1 +1,2 @@
-requests>=2.32,<3
+jsonschema>=4.20,<5
+playwright>=1.40,<2
