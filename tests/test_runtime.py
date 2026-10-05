@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from runtime.youtube_audit import METHOD_COSTS, SEARCH_CALL_BUDGET, Quota, Checkpoint, extract_channel_ref, plausible_key
-from runtime.transcript_audit import make_transcript_record, audit_learning, build_claim_evidence_matrix
+from runtime.transcript_audit import make_transcript_record, audit_learning, build_claim_evidence_matrix, _apply_transcript_sanity
 
 class RuntimeTests(unittest.TestCase):
     def test_quota_costs(self):
@@ -94,6 +94,12 @@ class RuntimeTests(unittest.TestCase):
     def test_embed_fallback_is_part_of_production_runtime(self):
         from runtime.youtube_audit import _embed_transcript_fallback
         self.assertTrue(callable(_embed_transcript_fallback))
+
+    def test_transcript_sanity_downgrades_implausible_density(self):
+        rec = make_transcript_record('abc123456', [{'text':'word '*1000, 'start':0, 'duration':0}], source='TEST')
+        checked = _apply_transcript_sanity(rec, 120)
+        self.assertEqual(checked['quality_grade'], 'QUESTIONABLE')
+        self.assertFalse(checked['transcript_sanity']['plausible'])
 
 if __name__=="__main__":
     unittest.main()
