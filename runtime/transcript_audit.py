@@ -7,9 +7,12 @@ hashes, bounded evidence excerpts, claim categories, and analysis signals.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from typing import Any, Iterable
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 
 DEFAULT_LANGUAGES = ("en", "en-US", "en-GB", "en-IN")
@@ -221,6 +224,76 @@ def make_transcript_record(
     }
 
 
+
+def _hosted_transcript_record(video_id: str, payload: Any, *, source_url: str, source_name: str) -> dict[str, Any] | None:
+    """Normalize a public third-party transcript response without treating it as official."""
+    snippets = []
+    language = None
+    language_code = None
+    is_generated = None
+
+    if isinstance(payload, dict):
+        language = payload.get("language") or payload.get("language_name")
+        language_code = payload.get("language_code") or payload.get("lang")
+        is_generated = payload.get("is_generated")
+        rows = payload.get("transcript") or payload.get("segments") or []
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict):
+                    text_value = row.get("text") or row.get("content") or ""
+                    start = row.get("start") or row.get("start_seconds") or 0
+                    duration = row.get("duration") or row.get("duration_seconds") or 0
+                    if text_value:
+                        snippets.append({"text": str(text_value), "start": float(start or 0), "duration": float(duration or 0)})
+
+    if not snippets and isinstance(payload, str):
+        lines = []
+        for raw in payload.splitlines():
+            line = raw.strip()
+            if not line or line.startswith('#'):
+                continue
+            line = re.sub(r'^\\[[0-9]+(?::[0-9]+)?\\]\\s*', '', line)
+            if re.match(r'^(?:title|source|language|duration|word count|available languages)\\s*:', line, re.I):
+                continue
+            lines.append(line)
+        snippets = [{"text": x, "start": 0, "duration": 0} for x in lines]
+
+    if not snippets:
+        return None
+
+    return make_transcript_record(
+        video_id, snippets, source=source_name, language=language,
+        language_code=language_code, is_generated=is_generated,
+    ) | {"source_url": source_url}
+
+
+def _fetch_public_hosted_transcript(video_id: str, languages: Iterable[str]) -> dict[str, Any] | None:
+    """Try public no-key transcript mirrors after YouTube-native methods are blocked."""
+    lang_list = [str(x) for x in languages if x]
+    lang = next((x for x in lang_list if x.lower().split("-")[0] == "en"), "en")
+    candidates = [
+        ("PUBLIC_THIRD_PARTY_YOUTUBE_TRANSCRIPT_AI", f"https://youtube-transcript.ai/transcript/{video_id}.txt?lang={lang}", "text"),
+        ("PUBLIC_THIRD_PARTY_FREETRANSCRIPTAPI", f"https://api.freetranscriptapi.com/v1/transcript?video_url={video_id}&lang={lang}", "json"),
+    ]
+    for name, url, kind in candidates:
+        try:
+            req = Request(url, headers={"Accept": "application/json,text/plain;q=0.9,*/*;q=0.8", "User-Agent": "YouTubeChannelDeepAudit/11.4-public-transcript-fallback"})
+            with urlopen(req, timeout=20) as resp:
+                raw = resp.read(4_000_000)
+                body = raw.decode("utf-8", errors="replace")
+                payload = json.loads(body) if kind == 'json' else body
+                record = _hosted_transcript_record(video_id, payload, source_url=url, source_name=name)
+                if record:
+                    record["source_class"] = "THIRD_PARTY_PUBLIC"
+                    record["independent_verification"] = "NOT_PERFORMED"
+                    record["provider"] = name
+                    return record
+        except (HTTPError, URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+            continue
+        except Exception:
+            continue
+    return None
+
 def audit_video_transcript(video_id: str, languages: Iterable[str] = DEFAULT_LANGUAGES) -> dict[str, Any]:
     base = {
         "video_id": video_id,
@@ -277,6 +350,10 @@ def audit_video_transcript(video_id: str, languages: Iterable[str] = DEFAULT_LAN
         return record
     except Exception as exc:
         base.update({"status": _exception_status(exc), "error": _safe_error(exc)})
+        hosted = _fetch_public_hosted_transcript(video_id, languages)
+        if hosted:
+            hosted["fallback_after"] = base.get("status")
+            return hosted
         return base
 
 
