@@ -7,8 +7,8 @@ from runtime.validate import validate
 class ValidatorTests(unittest.TestCase):
     def base_report(self):
         return {
-            "metadata":{"methodology_version":"11.3-production","schema_version":"11.3.0","input_contract":{"api_key_exposed":False}},
-            "channel":{},"coverage":{},"access_matrix":[],"snapshots":[],"videos":[{"id":"v1"}],
+            "metadata":{"methodology_version":"12.0-production","schema_version":"12.0.0","input_contract":{"api_key_exposed":False}},
+            "channel":{},"coverage":{},"access_matrix":[],"snapshots":[],"videos":[{"id":"v1","transcript_audit":{"status":"NO_TRANSCRIPT_FOUND","text_retained":False},"video_analysis":{"original_evidence":{"video_id":"v1","url":"https://www.youtube.com/watch?v=v1","title":"Test","description":"","evidence_boundary":"test"},"decision":"RESEARCH MORE","confidence":"LOW","overall_beginner_rating":4.0}}],
             "posts":[],"comments_summary":[],"playlists":[],"channel_sections":[],"transcripts":[],"transcript_audit":{"target_video_count":1,"attempted_video_count":0,"full_transcript_count":0,"coverage_percent":0,"full_coverage_percent":0},"sources":[{"source_id":"s1","url":"https://example.com","role":"OFFICIAL_REFERENCE","captured_at":"2026-01-01T00:00:00Z"}],
             "claims":[],"metrics":[],"calculations":[],"risks":[],"hypotheses":[],"experiments":[],"recommendations":[],"benchmarks":[],"knowledge_gaps":[],"deltas":[],"policy_checks":[],
             "decision_queue":{},"validation":{"status":"PARTIAL"},"executive_summary":{},"beginner_plan":{},"analysis":{},"reproducibility":{"credential_exposed":False},"self_audit":{"api_key_exposed":False}
@@ -22,7 +22,6 @@ class ValidatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             report=self.base_report()
-            report["videos"][0]["transcript_audit"]={"status":"NO_TRANSCRIPT_FOUND","text_retained":False}
             for name,obj in [("audit.json",report),("schema.json",{"type":"object","required":[],"properties":{}})]:
                 (root/name).write_text(json.dumps(obj),encoding="utf-8")
             (root/"audit.html").write_text("<!doctype html><html lang='en'><head></head><body><h1>x</h1><script>const a='AIzaAAAAAAAAAAAAAAAAAAAAAAA';</script></body></html>",encoding="utf-8")
