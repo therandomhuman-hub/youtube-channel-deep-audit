@@ -1,4 +1,4 @@
-version: 11.5-production
+version: 12.0-production
 mode: DEEP
 public_only: true
 exhaustive_upload_inventory: true
@@ -18,3 +18,11 @@ transcript_exhaustive_default: true
 claim_verification: transcript_proves_statement_only
 transcript_quality_sanity: duration_based_wpm_90_220
 transcript_provider_crosscheck: second_public_provider_when_questionable
+
+report_contract: original_public_evidence_then_audited_findings_then_beginner_guidance
+per_video_audit_required: true
+per_video_original_evidence_required: true
+per_video_decision_required: true
+per_video_confidence_required: true
+html_report_contains_all_top_level_sections: true
+release_requires_every_video_audited: true
