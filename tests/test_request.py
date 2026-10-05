@@ -11,7 +11,7 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(r.returncode,0)
         self.assertIn("@emmiescalm",r.stdout)
     def test_video_rejected(self):
-        r=self.run("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        r=self.execute("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
         self.assertNotEqual(r.returncode,0)
     def test_two_channels_rejected(self):
         r=self.run("https://www.youtube.com/@a https://www.youtube.com/@b")
