@@ -121,17 +121,28 @@ jobs:
           printf '%s\\n' "$code" > audit/validator_exit_code.txt
           exit 0
 
+      - name: Build final release binding
+        shell: bash
+        run: |
+          set +e
+          python runtime/build_release.py audit > audit/release_build.log 2>&1
+          code=$?
+          printf '%s\n' "$code" > audit/release_builder_exit_code.txt
+          exit 0
+
       - name: Final release gate
         shell: bash
         run: |
           set -euo pipefail
           collector_code="$(cat audit/collector_exit_code.txt)"
           validator_code="$(cat audit/validator_exit_code.txt)"
-          if [[ "$collector_code" != "0" || "$validator_code" != "0" ]]; then
+          release_builder_code="$(cat audit/release_builder_exit_code.txt)"
+          if [[ "$collector_code" != "0" || "$validator_code" != "0" || "$release_builder_code" != "0" ]]; then
             echo "RELEASE BLOCKED"
-            echo "collector=$collector_code validator=$validator_code"
+            echo "collector=$collector_code validator=$validator_code release_builder=$release_builder_code"
             exit 1
           fi
+          test -f audit/release_validation.json
           printf '%s\\n' 'RELEASED=true' > audit/release_status.txt
 
       - name: Upload audit package
