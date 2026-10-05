@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 API_ROOT = "https://www.googleapis.com/youtube/v3"
-UA = "YouTubeChannelDeepAudit/11.5-production"
+UA = "YouTubeChannelDeepAudit/12.0-production"
 
 # Google currently documents 1-unit costs for these read methods; search.list has
 # a separate 100-calls/day bucket and each call costs 1 unit in that bucket.
@@ -487,8 +487,28 @@ def per_video_analysis(video: dict[str, Any], comment_rows: list[dict[str, Any]]
             "source": transcript.get("source"),
         })
 
+    original_evidence = {
+        "video_id": video.get("id"),
+        "url": f"https://www.youtube.com/watch?v={video.get("id")}",
+        "title": title,
+        "description": desc,
+        "published_at": video.get("snippet", {}).get("publishedAt"),
+        "channel_title": video.get("snippet", {}).get("channelTitle"),
+        "duration": video.get("contentDetails", {}).get("duration"),
+        "content_type": video.get("content_type"),
+        "views": stats.get("viewCount"),
+        "likes": stats.get("likeCount"),
+        "comments": stats.get("commentCount"),
+        "thumbnail": (video.get("snippet", {}).get("thumbnails") or {}).get("high", {}).get("url")
+            or (video.get("snippet", {}).get("thumbnails") or {}).get("default", {}).get("url"),
+        "tags_available": bool(video.get("snippet", {}).get("tags")),
+        "resources": resources,
+        "evidence_boundary": "Public YouTube metadata and legitimately accessible public description/resources captured during this audit.",
+    }
+
     return {
         **learning,
+        "original_evidence": original_evidence,
         "claims": combined_claims[:20],
         "title_claim_count": len(title_claims),
         "transcript_claim_count": len(transcript_claims),
@@ -1044,117 +1064,188 @@ def build_claim_registry(videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 def render_html(report: dict[str, Any], path: Path) -> None:
-    channel = report.get("channel", {})
+    channel = report.get("channel", {}) or {}
     title = channel.get("snippet", {}).get("title") or "YouTube Channel Deep Audit"
-    videos = report.get("videos", [])
-    summary = report.get("transcript_audit", {})
+    videos = report.get("videos", []) or []
+    summary = report.get("transcript_audit", {}) or {}
+
+    def esc(value: Any) -> str:
+        return html.escape("" if value is None else str(value))
+
+    def json_block(value: Any) -> str:
+        return esc(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+
     cards = []
     for i, v in enumerate(videos, 1):
-        sn = v.get("snippet", {})
-        st = v.get("statistics", {})
+        sn = v.get("snippet", {}) or {}
+        st = v.get("statistics", {}) or {}
         a = v.get("video_analysis", {}) or {}
         t = v.get("transcript_audit", {}) or {}
+        original = a.get("original_evidence", {}) or {}
         claims = a.get("claims", [])[:12]
         reasons = "; ".join(a.get("policy_reasons", [])) or "No major risk signal detected."
         transcript_line = (
-            f"<b>{html.escape(str(t.get('status','NOT_CHECKED')))}</b> · "
-            f"{t.get('word_count','—')} words · {t.get('segment_count','—')} segments · "
-            f"{html.escape(str(t.get('language_code') or 'unknown'))} · "
+            f"<b>{esc(t.get('status','NOT_CHECKED'))}</b> · "
+            f"{esc(t.get('word_count','—'))} words · {esc(t.get('segment_count','—'))} segments · "
+            f"{esc(t.get('language_code') or 'unknown')} · "
             f"{'generated' if t.get('is_generated') else 'manual/unknown'}"
         )
         claim_html = "".join(
-            f"<li><b>{html.escape(str(c.get('claim') or c.get('summary') or ''))}</b> — "
-            f"<b>{html.escape(str(c.get('status','')))}</b>"
-            f" · verification: {html.escape(str(c.get('verification_state') or 'NOT_INDEPENDENTLY_VERIFIED'))}"
-            f" · evidence: {html.escape(str(c.get('evidence_strength') or 'DIRECT_CREATOR_STATEMENT'))}"
-            f" · independent verification required"
-            f"<br><span class='small'>Needed: {html.escape('; '.join(c.get('evidence_requirements', [])))}</span></li>"
+            f"<li><b>{esc(c.get('claim') or c.get('summary') or '')}</b> — "
+            f"<b>{esc(c.get('status',''))}</b> · "
+            f"verification: {esc(c.get('verification_state') or 'NOT_INDEPENDENTLY_VERIFIED')} · "
+            f"evidence: {esc(c.get('evidence_strength') or 'DIRECT_CREATOR_STATEMENT')} "
+            f"<br><span class='small'>Needed: {esc('; '.join(c.get('evidence_requirements', [])))}</span></li>"
             for c in claims
         ) or "<li>No transcript/title claim pattern extracted.</li>"
-        blind = "".join(f"<li>{html.escape(str(x))}</li>" for x in a.get("blind_spots", []))
-        cards.append(
-            f"<details class='video-card'><summary><strong>#{i}</strong> {html.escape(str(sn.get('title','')))}</summary>"
-            f"<div class='grid'>"
-            f"<div><b>Published</b><br>{html.escape(str(sn.get('publishedAt','')))}</div>"
-            f"<div><b>Views</b><br>{html.escape(str(st.get('viewCount','—')))}</div>"
-            f"<div><b>Likes</b><br>{html.escape(str(st.get('likeCount','—')))}</div>"
-            f"<div><b>Comments</b><br>{html.escape(str(st.get('commentCount','—')))}</div>"
-            f"<div><b>Type</b><br>{html.escape(str(v.get('content_type','')))}</div>"
-            f"<div><b>Overall beginner rating</b><br><span class='score'>{a.get('overall_beginner_rating','—')}/10</span></div>"
-            f"</div>"
-            f"<p><b>Decision:</b> {html.escape(str(a.get('decision','')))} · "
-            f"<b>Learning mode:</b> {html.escape(str(a.get('learning_mode','')))} · "
-            f"<b>Confidence:</b> {html.escape(str(a.get('confidence','')))}</p>"
-            f"<p><b>Scores:</b> usefulness {a.get('practical_usefulness','—')}/10 · "
-            f"evidence discipline {a.get('evidence_discipline','—')}/10 · "
-            f"beginner accessibility {a.get('beginner_accessibility','—')}/10 · "
-            f"repeatability {a.get('repeatability','—')}/10 · "
-            f"originality safety {a.get('originality_safety','—')}/10 · "
-            f"policy safety {a.get('policy_safety','—')}/10 · "
-            f"<b>policy risk {html.escape(str(a.get('policy_risk','')))}</b></p>"
-            f"<p><b>Transcript audit:</b> {transcript_line}</p>"
-            f"<p><b>Transcript SHA-256:</b> {html.escape(str(t.get('transcript_sha256') or '—'))}</p>"
-            f"<p><b>Transcript sanity:</b> {html.escape(json.dumps(t.get('transcript_sanity', {}), ensure_ascii=False))}</p>"
-            f"<div class='two'><section><h3>Claims</h3><ul>{claim_html}</ul></section>"
-            f"<section><h3>Policy / safety</h3><p>{html.escape(reasons)}</p>"
-            f"<p><b>Claim-evidence gap:</b> {a.get('claim_evidence_gap','—')}</p></section></div>"
-            f"<div class='two'><section><h3>Workflow reconstruction</h3><pre>{html.escape(json.dumps(a.get('workflow',{}),ensure_ascii=False,indent=2))}</pre></section>"
-            f"<section><h3>Blind spots</h3><ul>{blind}</ul><h3>Beginner takeaway</h3><p>{html.escape(str(a.get('beginner_takeaway','')))}</p></section></div>"
-            f"<p><b>Tools:</b> {html.escape(', '.join(a.get('tools',[])) or 'none detected')}</p>"
-            f"<p><a href='https://www.youtube.com/watch?v={html.escape(str(v.get('id')))}' target='_blank' rel='noopener'>Open video</a></p>"
-            f"</details>"
+        blind = "".join(f"<li>{esc(x)}</li>" for x in a.get("blind_spots", []))
+        description = original.get("description") or sn.get("description") or ""
+        thumb = original.get("thumbnail")
+        thumb_html = (
+            f"<img class='thumb' src='{esc(thumb)}' alt='Video thumbnail' loading='lazy'>"
+            if thumb else "<div class='thumb missing'>Thumbnail unavailable</div>"
         )
+
+        cards.append(
+            f"<details class='video-card'>"
+            f"<summary><strong>#{i}</strong> {esc(sn.get('title',''))} "
+            f"<span class='pill'>{esc(a.get('decision','RESEARCH MORE'))}</span> "
+            f"<span class='pill'>{esc(a.get('confidence','LOW'))} confidence</span></summary>"
+            f"<div class='video-body'>"
+            f"<section class='evidence-panel'>"
+            f"<h3>1. Original public evidence</h3>"
+            f"<div class='original-grid'>"
+            f"<div>{thumb_html}</div>"
+            f"<div><p><b>Title:</b> {esc(original.get('title') or sn.get('title'))}</p>"
+            f"<p><b>Video ID:</b> <code>{esc(v.get('id'))}</code></p>"
+            f"<p><b>URL:</b> <a href='https://www.youtube.com/watch?v={esc(v.get('id'))}' target='_blank' rel='noopener'>Open original YouTube video</a></p>"
+            f"<p><b>Published:</b> {esc(original.get('published_at') or sn.get('publishedAt'))}</p>"
+            f"<p><b>Duration:</b> {esc(original.get('duration') or v.get('contentDetails',{}).get('duration') or '—')}</p>"
+            f"<p><b>Type:</b> {esc(original.get('content_type') or v.get('content_type') or 'UNKNOWN')}</p>"
+            f"<p><b>Public metrics:</b> {esc(original.get('views', st.get('viewCount','—')))} views · "
+            f"{esc(original.get('likes', st.get('likeCount','—')))} likes · "
+            f"{esc(original.get('comments', st.get('commentCount','—')))} comments</p></div>"
+            f"</div>"
+            f"<details><summary>Original description</summary><pre>{esc(description)}</pre></details>"
+            f"<p class='small'><b>Evidence boundary:</b> {esc(original.get('evidence_boundary'))}</p>"
+            f"</section>"
+            f"<section class='audit-panel'>"
+            f"<h3>2. Audited findings</h3>"
+            f"<p><b>Overall beginner rating:</b> <span class='score'>{esc(a.get('overall_beginner_rating','—'))}/10</span> · "
+            f"<b>Evidence grade:</b> {esc(a.get('evidence_grade','—'))} · "
+            f"<b>Confidence:</b> {esc(a.get('confidence','—'))}</p>"
+            f"<p><b>Scores:</b> usefulness {esc(a.get('practical_usefulness','—'))}/10 · "
+            f"evidence discipline {esc(a.get('evidence_discipline','—'))}/10 · "
+            f"beginner accessibility {esc(a.get('beginner_accessibility','—'))}/10 · "
+            f"repeatability {esc(a.get('repeatability','—'))}/10 · "
+            f"originality safety {esc(a.get('originality_safety','—'))}/10 · "
+            f"policy safety {esc(a.get('policy_safety','—'))}/10 · "
+            f"policy risk <b>{esc(a.get('policy_risk','—'))}</b></p>"
+            f"<p><b>Transcript audit:</b> {transcript_line}</p>"
+            f"<p><b>Transcript SHA-256:</b> {esc(t.get('transcript_sha256') or '—')}</p>"
+            f"<p><b>Claim-evidence gap:</b> {esc(a.get('claim_evidence_gap','—'))}</p>"
+            f"<div class='two'><section><h4>Claims and verification</h4><ul>{claim_html}</ul></section>"
+            f"<section><h4>Policy / safety</h4><p>{esc(reasons)}</p>"
+            f"<p><b>Basis:</b> {esc('; '.join(a.get('analysis_basis', [])))}</p></section></div>"
+            f"<div class='two'><section><h4>Workflow reconstruction</h4><pre>{json_block(a.get('workflow',{}))}</pre></section>"
+            f"<section><h4>Blind spots</h4><ul>{blind}</ul></section></div>"
+            f"</section>"
+            f"<section class='beginner-panel'>"
+            f"<h3>3. Beginner-friendly professional guidance</h3>"
+            f"<p><span class='decision'>{esc(a.get('decision','RESEARCH MORE'))}</span> "
+            f"<b>Learning mode:</b> {esc(a.get('learning_mode','—'))}</p>"
+            f"<p><b>What to learn:</b> {esc(a.get('beginner_takeaway','—'))}</p>"
+            f"<p><b>What not to assume:</b> Do not treat creator-reported claims as independently verified. Respect the transcript status and evidence boundary.</p>"
+            f"<details><summary>Detailed audit data</summary><pre>{json_block(a)}</pre></details>"
+            f"</section>"
+            f"</div></details>"
+        )
+
+    exec_summary = report.get("executive_summary", {}) or {}
+    coverage = report.get("coverage", {}) or {}
+    validation = report.get("validation", {}) or {}
+    recommendations = report.get("recommendations", []) or []
+    risks = report.get("risks", []) or []
+    beginner_plan = report.get("beginner_plan", {}) or {}
+    analysis = report.get("analysis", {}) or {}
+
+    recommendation_html = "".join(
+        f"<li><b>{esc(x.get('title') or x.get('recommendation') or x.get('action') or 'Recommendation')}</b>"
+        f" — {esc(x.get('reason') or x.get('why') or x.get('description') or '')}</li>"
+        for x in recommendations[:30] if isinstance(x, dict)
+    ) or "<li>No structured recommendations were emitted.</li>"
+    risk_html = "".join(
+        f"<li><b>{esc(x.get('title') or x.get('risk') or 'Risk')}</b>"
+        f" — {esc(x.get('description') or x.get('reason') or '')}</li>"
+        for x in risks[:30] if isinstance(x, dict)
+    ) or "<li>No structured risks were emitted.</li>"
 
     doc = f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{html.escape(title)} — Evidence-Bounded Deep Audit</title>
+<title>{esc(title)} — Professional Evidence-Bounded Deep Audit v12</title>
 <style>
-:root {{ font-family: system-ui,-apple-system,Segoe UI,sans-serif; color-scheme: light; --bg:#f5f7fb; --card:#fff; --ink:#152033; --muted:#5d6878; --line:#dbe2ec; }}
-:root[data-theme="dark"] {{ color-scheme: dark; --bg:#0e131b; --card:#151c26; --ink:#eef3f8; --muted:#a9b5c6; --line:#293444; }}
+:root {{ font-family:system-ui,-apple-system,Segoe UI,sans-serif; color-scheme:light; --bg:#f4f6fa; --card:#fff; --ink:#172033; --muted:#617086; --line:#d9e0ea; --accent:#315efb; }}
+:root[data-theme="dark"] {{ color-scheme:dark; --bg:#0d1219; --card:#151c25; --ink:#edf3f9; --muted:#a9b6c7; --line:#2a3544; --accent:#7ea0ff; }}
 * {{ box-sizing:border-box; }}
-body {{ margin:0; background:var(--bg); color:var(--ink); line-height:1.5; }}
-main {{ max-width:1400px; margin:auto; padding:28px; }}
-header,section,details {{ background:var(--card); border:1px solid var(--line); border-radius:16px; }}
-header {{ padding:24px; margin-bottom:16px; }}
-.grid {{ display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin:16px 0; }}
-.grid>div {{ padding:10px; border:1px solid var(--line); border-radius:10px; }}
+body {{ margin:0; background:var(--bg); color:var(--ink); line-height:1.55; }}
+main {{ max-width:1500px; margin:auto; padding:28px; }}
+header, section, details {{ background:var(--card); border:1px solid var(--line); border-radius:16px; }}
+header {{ padding:26px; margin-bottom:16px; }}
+section {{ padding:18px; margin-bottom:16px; }}
+h1,h2,h3,h4 {{ line-height:1.2; }}
+.grid {{ display:grid; grid-template-columns:repeat(6,1fr); gap:10px; }}
+.grid>div,.metric {{ padding:12px; border:1px solid var(--line); border-radius:10px; }}
 .two {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }}
-.two>section {{ padding:14px; }}
-.video-card {{ margin:12px 0; padding:0 16px 16px; }}
-.video-card summary {{ cursor:pointer; padding:16px 0; font-size:1.04rem; }}
-pre {{ white-space:pre-wrap; overflow:auto; }}
-.score {{ font-size:1.3rem; font-weight:800; }}
+.original-grid {{ display:grid; grid-template-columns:220px 1fr; gap:18px; align-items:start; }}
+.thumb {{ width:100%; max-width:220px; border-radius:10px; border:1px solid var(--line); }}
+.thumb.missing {{ min-height:120px; display:grid; place-items:center; color:var(--muted); }}
+.video-card {{ margin:14px 0; padding:0 18px 18px; }}
+.video-card summary {{ cursor:pointer; padding:18px 0; font-size:1.05rem; }}
+.video-body {{ display:grid; gap:14px; }}
+.evidence-panel {{ border-left:4px solid #7b8798; }}
+.audit-panel {{ border-left:4px solid var(--accent); }}
+.beginner-panel {{ border-left:4px solid #6f7f95; }}
+.score {{ font-size:1.4rem; font-weight:800; }}
+.pill,.decision {{ display:inline-block; padding:4px 9px; border:1px solid var(--line); border-radius:999px; margin-left:6px; font-weight:700; }}
 .toolbar {{ display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }}
 input,button {{ padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--ink); }}
-button {{ cursor:pointer; }}
-.small {{ color:var(--muted); font-size:.93rem; }}
-.badge {{ display:inline-block; padding:4px 8px; border:1px solid var(--line); border-radius:999px; margin-right:6px; }}
-@media(max-width:900px) {{ .grid {{ grid-template-columns:repeat(2,1fr); }} .two {{ grid-template-columns:1fr; }} }}
-@media print {{ .toolbar, a {{ display:none!important; }} details {{ break-inside:avoid; }} body {{ background:#fff; }} }}
+.small {{ color:var(--muted); font-size:.92rem; }}
+pre {{ white-space:pre-wrap; overflow:auto; background:var(--bg); padding:12px; border-radius:10px; }}
+a {{ color:var(--accent); }}
+@media(max-width:900px) {{ .grid {{ grid-template-columns:repeat(2,1fr); }} .two,.original-grid {{ grid-template-columns:1fr; }} }}
+@media print {{ .toolbar {{ display:none; }} details {{ break-inside:avoid; }} }}
 </style>
 </head>
 <body>
 <main>
 <header>
-<h1>{html.escape(title)} — Evidence-Bounded Deep Audit</h1>
-<p class="small">Every video is scored separately. Transcript availability is never treated as proof of truth; financial, growth and time-to-result claims remain creator-reported until independently verified.</p>
-<div class="toolbar"><input id="search" placeholder="Filter videos by title, risk, decision or claim…"><button id="theme">Toggle theme</button><button onclick="window.print()">Print</button></div>
-<div class="badge">Videos: {len(videos)}</div>
-<div class="badge">Full transcripts: {summary.get('full_transcript_count','—')}</div>
-<div class="badge">Transcript coverage: {summary.get('coverage_percent','—')}%</div>
-<div class="badge">Full transcript coverage: {summary.get('full_coverage_percent','—')}%</div>
+<h1>{esc(title)} — Professional YouTube Deep Audit</h1>
+<p><b>Report contract:</b> Original public evidence → audited findings → beginner decision. This report does not treat unavailable data as zero and does not treat creator claims as independently verified without evidence.</p>
+<div class="toolbar">
+<input id="search" placeholder="Filter videos by title, decision, risk, transcript status…">
+<button id="theme">Toggle theme</button>
+<button onclick="window.print()">Print</button>
+</div>
+<div class="grid">
+<div><b>Videos</b><br>{len(videos)}</div>
+<div><b>Full transcripts</b><br>{esc(summary.get('full_transcript_count','—'))}</div>
+<div><b>Transcript attempts</b><br>{esc(summary.get('attempted_video_count','—'))}</div>
+<div><b>Transcript coverage</b><br>{esc(summary.get('coverage_percent','—'))}%</div>
+<div><b>Full coverage</b><br>{esc(summary.get('full_coverage_percent','—'))}%</div>
+<div><b>Release</b><br>{esc(validation.get('status','—'))}</div>
+</div>
 </header>
-<section style="padding:16px;margin-bottom:16px">
-<h2>Transcript coverage</h2>
-<pre>{html.escape(json.dumps(summary,ensure_ascii=False,indent=2))}</pre>
-</section>
-<section style="padding:16px">
-<h2>Individual video audits</h2>
-{''.join(cards)}
-</section>
+<section><h2>Executive summary</h2><pre>{json_block(exec_summary)}</pre></section>
+<section><h2>Channel and collection coverage</h2><p><b>Channel:</b> {esc(channel.get('snippet',{}).get('title') or '—')} · <b>ID:</b> {esc(channel.get('id') or '—')}</p><pre>{json_block(coverage)}</pre></section>
+<section><h2>Analysis and recommendations</h2><h3>Whole-channel analysis</h3><pre>{json_block(analysis)}</pre><h3>Recommendations</h3><ul>{recommendation_html}</ul></section>
+<section><h2>Risk register</h2><ul>{risk_html}</ul></section>
+<section><h2>Beginner plan</h2><pre>{json_block(beginner_plan)}</pre></section>
+<section><h2>Transcript coverage and evidence rules</h2><pre>{json_block(summary)}</pre></section>
+<section><h2>Every video — original evidence + audit + beginner guidance</h2><p>Every discovered video has its own card. Expand a card to see the public evidence first, then the audit, then the beginner-facing decision. A missing transcript never becomes a fake transcript or a high-confidence content conclusion.</p>{''.join(cards)}</section>
+<section><h2>Sources, validation, and reproducibility</h2><h3>Validation</h3><pre>{json_block(validation)}</pre><h3>Sources</h3><pre>{json_block(report.get('sources', []))}</pre><h3>Reproducibility</h3><pre>{json_block(report.get('reproducibility', {}))}</pre><h3>Self-audit</h3><pre>{json_block(report.get('self_audit', {}))}</pre></section>
 </main>
 <script>
 const root=document.documentElement;
@@ -1183,7 +1274,7 @@ def write_artifacts(out: Path, report: dict[str, Any], comments: list[dict[str, 
         raise RuntimeError("Canonical schema.json is missing from the repository.")
 
     (out / "config.yaml").write_text(
-        "version: 11.5-production\nmode: DEEP\npublic_only: true\n"
+        "version: 12.0-production\nmode: DEEP\npublic_only: true\n"
         "credential_source: GITHUB_ACTIONS:YOUTUBE_API_KEY\n"
         "transcript_engine: youtube-transcript-api+public-ui+public-embed-caption-fallback\n"
         "transcript_full_text_persisted: false\n",
@@ -1283,7 +1374,7 @@ def write_artifacts(out: Path, report: dict[str, Any], comments: list[dict[str, 
     (out / "video_analysis.md").write_text("\n".join(lines), encoding="utf-8")
     render_html(report, out / "audit.html")
 
-    manifest = {"schema_version": "11.5.0", "generated_at": utc_now(), "files": {}}
+    manifest = {"schema_version": "12.0.0", "generated_at": utc_now(), "files": {}}
     for p in sorted(out.iterdir()):
         if p.is_file() and p.name not in {"release_manifest.json", "checkpoint.json"}:
             manifest["files"][p.name] = sha256_file(p)
@@ -1324,8 +1415,8 @@ def run(args: argparse.Namespace) -> int:
         report = {
             "metadata": {
                 "audit_id": "blocked",
-                "methodology_version": "11.5-production",
-                "schema_version": "11.5.0",
+                "methodology_version": "12.0-production",
+                "schema_version": "12.0.0",
                 "started_at": started,
                 "completed_at": utc_now(),
                 "canonical_channel_url": args.channel,
@@ -1579,8 +1670,8 @@ def run(args: argparse.Namespace) -> int:
     report = {
         "metadata": {
             "audit_id": f"{channel_id}-{captured.replace(':','').replace('+00:00','Z')}",
-            "methodology_version": "11.5-production",
-            "schema_version": "11.5.0",
+            "methodology_version": "12.0-production",
+            "schema_version": "12.0.0",
             "started_at": started,
             "completed_at": captured,
             "canonical_channel_url": canonical,
@@ -1658,7 +1749,7 @@ def run(args: argparse.Namespace) -> int:
             "transcript_audit": transcript_report,
         },
         "reproducibility": {
-            "collector_version": "11.5-production",
+            "collector_version": "12.0-production",
             "transcript_engine": "youtube-transcript-api 1.2.x + public transcript UI fallback",
             "skill_sha256": sha256_file(skill),
             "credential_present": True,
