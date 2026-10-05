@@ -386,6 +386,66 @@ def performance_metrics(videos: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def extract_claims_from_title(title: str) -> list[dict[str, Any]]:
+    claims = []
+    text = title or ""
+    for value in re.findall(r"\\$\\s?[\\d,.]+(?:K|M|k|m)?(?:/month|/mo)?", text):
+        claims.append({"claim": f"Title presents outcome/revenue figure: {value}", "status": "CREATOR_REPORTED", "verification": "not independently verified by public API metadata"})
+    for value, unit in re.findall(r"(?:in|within|over)\\s+(\\d+)\\s+(hours?|days?|weeks?|months?)", text, re.I):
+        claims.append({"claim": f"Title presents time-to-result claim: {value} {unit}", "status": "CREATOR_REPORTED", "verification": "not independently verified by public API metadata"})
+    if re.search(r"\\b(copy|only|secret|guaranteed|monetized|1\\.8 billion|800m|2m subscriber)\\b", text, re.I):
+        claims.append({"claim": "Title uses strong replication/exclusivity/result framing", "status": "OBSERVED", "verification": "directly observed in public title"})
+    return claims
+
+
+def per_video_analysis(video: dict[str, Any], comment_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    title = video.get("snippet", {}).get("title", "") or ""
+    desc = video.get("snippet", {}).get("description", "") or ""
+    low = title.lower()
+    stats = video.get("statistics", {}) or {}
+    try: views = int(stats.get("viewCount", 0) or 0)
+    except Exception: views = 0
+    rows = [r for r in comment_rows if r.get("video_id") == video.get("id")]
+    ctext = " ".join(str(r.get("text", "")) for r in rows).lower()
+    beginner_signals = sum(bool(re.search(p, low)) for p in [r"how i", r"full course", r"full system", r"system", r"guide", r"breakdown", r"tutorial", r"how to"])
+    usefulness = min(10, 5 + min(4, beginner_signals // 2))
+    evidence = min(10, 4 + (1 if rows else 0) + (2 if video.get("transcript_status") in {"PUBLIC_TRANSCRIPT_AVAILABLE", "FULL_TRANSCRIPT_AVAILABLE"} else 0))
+    accessibility = min(10, 6 + min(3, beginner_signals))
+    repeatability = min(10, 5 + (2 if any(x in low for x in ["system", "workflow", "full course", "how i", "breakdown"]) else 0))
+    originality = 4 if "copy" in low else 7
+    if any(x in low for x in ["automation", "ai video", "ai videos", "mass"]): originality = max(1, originality - 1)
+    risks = []
+    if any(x in low for x in ["copy", "monetized in", "only", "secret", "guaranteed"]): risks.append("high-certainty or replication framing")
+    if "$" in title: risks.append("large outcome/result claim")
+    if any(x in low for x in ["ai", "automation", "faceless"]): risks.append("AI/faceless/automation monetization risk needs policy-aware implementation")
+    policy_risk = "High" if "copy" in low else ("Medium" if risks else "Low")
+    decision = "MODIFY" if policy_risk == "High" else ("KEEP" if usefulness >= 7 and evidence >= 5 and originality >= 6 else "TEST")
+    resources = resource_hints(desc)
+    tools = sorted(set(re.findall(r"\\b(?:ChatGPT|Claude|Gemini|Canva|CapCut|VidIQ|TubeBuddy|Gumroad|WhatsApp|Instagram|Facebook|YouTube|TikTok)\\b", title + " " + desc, re.I)))
+    workflow = {
+        "input": "Audience problem / creator outcome inferred from public title and description",
+        "research": "Not directly observable from metadata; transcript unavailable/not detected in this run",
+        "decision": "Chosen strategy/case-study framing visible in public title/description",
+        "production": "Not directly observable from public metadata",
+        "packaging": "Outcome + platform/problem + mechanism/time + system/course/copy framing",
+        "publishing": "Public upload observed",
+        "measurement": "Public views/likes/comments observed; private CTR/retention unavailable",
+        "monetization": "Public product/affiliate/resource links where present; conversion/revenue not verified",
+    }
+    blind_spots = ["Private analytics (CTR, retention, impressions, watch time) unavailable", "Failure rate and unsuccessful experiments not observable", "True costs, labor, profit and conversion rates not established"]
+    if video.get("transcript_status") == "NOT_DETECTED": blind_spots.append("Transcript-level workflow and claim verification unavailable")
+    if not resources: blind_spots.append("No classified outbound resource signal in description")
+    themes = [x for x in ["how","help","niche","prompt","tool","views","start","free","works"] if x in ctext]
+    return {
+        "practical_usefulness": usefulness, "evidence_quality": evidence, "beginner_accessibility": accessibility,
+        "repeatability": repeatability, "originality_safety": originality, "policy_risk": policy_risk, "decision": decision,
+        "claims": extract_claims_from_title(title), "workflow": workflow, "tools": tools, "resources": resources,
+        "comment_evidence": {"comment_count": len(rows), "themes": themes}, "blind_spots": blind_spots,
+        "beginner_takeaway": "Study the audience problem, mechanism and evidence; reproduce the learning with original execution." if decision in {"KEEP","TEST"} else "Do not copy the framing literally; convert it into an original, evidence-bounded case study.",
+        "analysis_basis": ["public metadata", "public description/resource links", "public performance counters", "public comments when available", "transcript status"],
+    }
+
+
 def comment_keyword_summary(rows: list[dict[str, Any]]) -> dict[str, int]:
     blob = " ".join(str(x.get("text","")) for x in rows).lower()
     terms = ["great","helpful","thanks","scam","works","doesn't work","expensive","link","tutorial","ai","youtube"]
@@ -509,16 +569,30 @@ def render_html(report: dict[str,Any], path: Path) -> None:
     data=json.dumps({"videos":videos},ensure_ascii=False).replace("<","\\u003c").replace("</script","<\\/script")
     cards=[]
     for i,v in enumerate(videos,1):
-        sn=v.get("snippet",{}); st=v.get("statistics",{}); hints=v.get("_audit_hints",{})
+        sn=v.get("snippet",{}); st=v.get("statistics",{}); hints=v.get("_audit_hints",{}); a=v.get("video_analysis",{})
+        claims=json.dumps(a.get("claims",[]),ensure_ascii=False,indent=2)[:5000]
+        workflow=json.dumps(a.get("workflow",{}),ensure_ascii=False,indent=2)[:5000]
+        blind="\\n".join(a.get("blind_spots",[]))[:3000]
         cards.append(
             "<details class='video-card'><summary><strong>#%d</strong> %s</summary>"
             "<div class='cardgrid'><div><b>Published</b><br>%s</div><div><b>Views</b><br>%s</div><div><b>Likes</b><br>%s</div>"
             "<div><b>Comments</b><br>%s</div><div><b>Type</b><br>%s</div><div><b>Transcript</b><br>%s</div></div>"
-            "<p><b>Resources:</b> %s</p><p><b>Signals:</b> %s</p><p><a href='https://www.youtube.com/watch?v=%s' target='_blank' rel='noreferrer noopener'>Open video</a></p></details>"
+            "<p><b>Decision:</b> %s</p><p><b>Scores:</b> usefulness %s/10 · evidence %s/10 · beginner %s/10 · repeatability %s/10 · originality %s/10 · policy risk %s</p>"
+            "<div class='two'><div><b>Claims</b><pre>%s</pre></div><div><b>Workflow</b><pre>%s</pre></div></div>"
+            "<div class='two'><div><b>Blind spots</b><pre>%s</pre></div><div><b>Beginner takeaway</b><p>%s</p></div></div>"
+            "<p><b>Tools:</b> %s</p><p><b>Resources:</b> %s</p><p><b>Comment evidence:</b> %s</p>"
+            "<p><a href='https://www.youtube.com/watch?v=%s' target='_blank' rel='noreferrer noopener'>Open video</a></p></details>"
             % (i,html.escape(sn.get("title","")),html.escape(str(sn.get("publishedAt","—"))),html.escape(str(st.get("viewCount","—"))),
                html.escape(str(st.get("likeCount","—"))),html.escape(str(st.get("commentCount","—"))),html.escape(str(v.get("content_type","UNKNOWN"))),
-               html.escape(str(v.get("transcript_status","NOT_CHECKED"))),html.escape(json.dumps(hints.get("resources",[]),ensure_ascii=False)[:1800]),
-               html.escape(", ".join(hints.get("keywords",[])) or "none detected"),html.escape(v.get("id","")))
+               html.escape(str(v.get("transcript_status","NOT_CHECKED"))),html.escape(str(a.get("decision","TEST"))),
+               html.escape(str(a.get("practical_usefulness","—"))),html.escape(str(a.get("evidence_quality","—"))),
+               html.escape(str(a.get("beginner_accessibility","—"))),html.escape(str(a.get("repeatability","—"))),
+               html.escape(str(a.get("originality_safety","—"))),html.escape(str(a.get("policy_risk","—"))),
+               html.escape(claims),html.escape(workflow),html.escape(blind),html.escape(a.get("beginner_takeaway","")),
+               html.escape(", ".join(a.get("tools",[])) or "none detected"),
+               html.escape(json.dumps(a.get("resources",[]),ensure_ascii=False)[:1800]),
+               html.escape(json.dumps(a.get("comment_evidence",{}),ensure_ascii=False)),
+               html.escape(v.get("id","")))
         )
     sources="".join(
         f"<tr><td>{html.escape(str(s.get('source_id','')))}</td><td><a href='{html.escape(str(s.get('url','')))}'>{html.escape(str(s.get('url','')))}</a></td><td>{html.escape(str(s.get('role','')))}</td></tr>"
@@ -603,6 +677,37 @@ def write_artifacts(out: Path, report: dict[str,Any], comments: list[dict[str,An
     csv_write(out/"comments_coverage.csv",report.get("comments_summary",[]),["video_id","top_level_threads","replies_collected","complete","reply_pages","coverage"])
     csv_write(out/"comments.csv",comments,["video_id","kind","comment_id","text","published_at"])
     csv_write(out/"sources.csv",report.get("sources",[]),["source_id","url","role","captured_at"])
+    csv_write(out/"video_analysis.csv",[
+        {
+            "video_id":v.get("id"),
+            "title":v.get("snippet",{}).get("title"),
+            "decision":v.get("video_analysis",{}).get("decision"),
+            "usefulness":v.get("video_analysis",{}).get("practical_usefulness"),
+            "evidence":v.get("video_analysis",{}).get("evidence_quality"),
+            "beginner":v.get("video_analysis",{}).get("beginner_accessibility"),
+            "repeatability":v.get("video_analysis",{}).get("repeatability"),
+            "originality":v.get("video_analysis",{}).get("originality_safety"),
+            "policy_risk":v.get("video_analysis",{}).get("policy_risk"),
+            "transcript_status":v.get("transcript_status")
+        } for v in report.get("videos",[])
+    ],["video_id","title","decision","usefulness","evidence","beginner","repeatability","originality","policy_risk","transcript_status"])
+    lines=["# Video-by-Video Analysis","",f"Videos analyzed: {len(report.get('videos',[]))}",""]
+    for i,v in enumerate(report.get("videos",[]),1):
+        a=v.get("video_analysis",{})
+        lines += [
+            f"## {i}. {v.get('snippet',{}).get('title','')}",
+            f"- Video ID: {v.get('id')}",
+            f"- Decision: {a.get('decision')}",
+            f"- Scores: usefulness {a.get('practical_usefulness')}/10; evidence {a.get('evidence_quality')}/10; beginner {a.get('beginner_accessibility')}/10; repeatability {a.get('repeatability')}/10; originality {a.get('originality_safety')}/10; policy risk {a.get('policy_risk')}",
+            f"- Transcript: {v.get('transcript_status')}",
+            f"- Claims: {json.dumps(a.get('claims',[]),ensure_ascii=False)}",
+            f"- Tools: {', '.join(a.get('tools',[])) or 'none detected'}",
+            f"- Workflow: {json.dumps(a.get('workflow',{}),ensure_ascii=False)}",
+            f"- Blind spots: {'; '.join(a.get('blind_spots',[]))}",
+            f"- Beginner takeaway: {a.get('beginner_takeaway')}",
+            ""
+        ]
+    (out/"video_analysis.md").write_text("\n".join(lines),encoding="utf-8")
     render_html(report,out/"audit.html")
     manifest={"schema_version":"11.2.0","generated_at":utc_now(),"files":{}}
     for p in sorted(out.iterdir()):
@@ -722,6 +827,9 @@ def run(args: argparse.Namespace) -> int:
             checkpoint.set("comments_summary",comments_summary); checkpoint.set("comments",comments)
             if quota.used>=quota.run_budget:
                 break
+
+    for v in videos:
+        v["video_analysis"] = per_video_analysis(v, comments)
 
     captured=utc_now()
     report={
