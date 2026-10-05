@@ -722,7 +722,81 @@ def browser_collect(
                         f"https://www.youtube.com/watch?v={vid}",
                         wait_until="domcontentloaded",
                     )
-                    page.wait_for_timeout(500)
+                    page.wait_for_timeout(700)
+
+                    # YouTube's 2026 transcript UI places the transcript control
+                    # in the expanded description and renders segments under the
+                    # searchable-transcript engagement panel.
+                    try:
+                        expand = page.locator("#expand")
+                        if expand.count():
+                            expand.first.click(timeout=5000)
+                            page.wait_for_timeout(300)
+                    except Exception:
+                        pass
+
+                    transcript_selectors = [
+                        'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] .segment-text',
+                        'transcript-segment-view-model .yt-core-attributed-string',
+                        'ytd-transcript-segment-list-renderer .segment-text',
+                        '#segments-container .segment-text',
+                        '#segments-container yt-formatted-string',
+                    ]
+                    segment_locator = None
+                    for selector in transcript_selectors:
+                        loc = page.locator(selector)
+                        if loc.count():
+                            segment_locator = loc
+                            break
+
+                    if segment_locator is None:
+                        button_selectors = [
+                            'button[aria-label="Show transcript" i]',
+                            'ytd-video-description-transcript-section-renderer button',
+                        ]
+                        button = None
+                        for selector in button_selectors:
+                            loc = page.locator(selector)
+                            if loc.count():
+                                button = loc.first
+                                break
+                        if button is None:
+                            scopes = page.locator(
+                                "ytd-video-description-transcript-section-renderer, "
+                                "#structured-description, ytd-watch-metadata"
+                            )
+                            count = scopes.count()
+                            for j in range(count):
+                                loc = scopes.nth(j).locator("button, tp-yt-paper-button").filter(
+                                    has_text=re.compile(r"transcript", re.I)
+                                )
+                                if loc.count():
+                                    button = loc.first
+                                    break
+                        if button is not None:
+                            button.click(timeout=10000)
+                            page.wait_for_timeout(1000)
+
+                        for selector in transcript_selectors:
+                            loc = page.locator(selector)
+                            if loc.count():
+                                segment_locator = loc
+                                break
+
+                    if segment_locator is not None:
+                        texts = segment_locator.evaluate_all(
+                            "els => els.map(e => (e.innerText || e.textContent || '').trim()).filter(Boolean)"
+                        )
+                        segments = [{"text": t, "start": 0, "duration": 0} for t in texts if t]
+                        if segments:
+                            item = make_transcript_record(
+                                vid,
+                                segments,
+                                source="YOUTUBE_PUBLIC_TRANSCRIPT_UI",
+                            )
+                            item["captured_at"] = utc_now()
+                            result["transcripts"].append(item)
+                            continue
 
                     # First-party caption tracks embedded in the public player response.
                     cap = _public_caption_track(page, vid)
@@ -739,35 +813,7 @@ def browser_collect(
                         item.update(cap)
                         item["captured_at"] = utc_now()
                     else:
-                        # UI fallback: detect transcript controls by label/text, not only aria attributes.
-                        locators = [
-                            page.locator('button[aria-label*="transcript" i]'),
-                            page.locator('tp-yt-paper-button[aria-label*="transcript" i]'),
-                            page.locator("ytd-video-description-transcript-section-renderer button"),
-                            page.get_by_text("Show transcript", exact=True),
-                        ]
-                        button = None
-                        for locator in locators:
-                            if locator.count():
-                                button = locator.first
-                                break
-                        if button is None:
-                            item["status"] = "NOT_DETECTED"
-                        else:
-                            button.click(timeout=10000)
-                            page.wait_for_timeout(750)
-                            segments = page.locator("ytd-transcript-segment-renderer").evaluate_all(
-                                "els => els.map(e => ({text: (e.innerText || e.textContent || '').trim(), start: 0, duration: 0}))"
-                            )
-                            if segments:
-                                item = make_transcript_record(
-                                    vid,
-                                    segments,
-                                    source="YOUTUBE_PUBLIC_TRANSCRIPT_UI",
-                                )
-                                item["captured_at"] = utc_now()
-                            else:
-                                item["status"] = "TRANSCRIPT_PANEL_NO_SEGMENTS"
+                        item["status"] = "NOT_DETECTED"
                 except Exception as exc:
                     item["status"] = "UNAVAILABLE"
                     item["error"] = safe_text(exc)[:500]
