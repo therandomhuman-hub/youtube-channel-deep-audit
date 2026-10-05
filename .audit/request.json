@@ -1,9 +1,9 @@
 {
   "channel_url": "https://www.youtube.com/@emmiescalm",
-  "requested_at": "2026-10-05T10:26:44.791Z",
-  "mode": "DEEP_TRANSCRIPT_EVIDENCE",
+  "requested_at": "2026-10-05T13:51:42.473Z",
+  "mode": "DEEP_TRANSCRIPT_EVIDENCE_V11_4",
   "public_boundary": "maximum legitimately accessible public/API/browser evidence",
   "api_credential_source": "GitHub Actions secret YOUTUBE_API_KEY",
-  "request_id": "emmiescalm-v11.3-final-transcript-extraction",
+  "request_id": "emmiescalm-v11.4-transcript-first",
   "status": "pending"
 }
