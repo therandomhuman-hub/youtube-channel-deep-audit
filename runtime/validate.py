@@ -39,6 +39,52 @@ class HTMLCheck(HTMLParser):
     def handle_startendtag(self,tag,attrs):
         return
 
+class VideoCardParser(HTMLParser):
+    """Extract complete outer .video-card elements without regex-parsing nested HTML."""
+    VOID={"area","base","br","col","embed","hr","img","input","link","meta","param","source","track","wbr"}
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.cards=[]
+        self._capture=None
+    @staticmethod
+    def _attrs(attrs):
+        return {k:v for k,v in attrs if k}
+    def handle_starttag(self,tag,attrs):
+        a=self._attrs(attrs)
+        if self._capture is not None:
+            self._capture["html_parts"].append(self.get_starttag_text() or "")
+        if tag=="details" and "video-card" in (a.get("class") or "").split():
+            if self._capture is not None:
+                self._capture["nested_details"] += 1
+            else:
+                self._capture={"video_id":a.get("data-video-id"),"html_parts":[self.get_starttag_text() or ""],"text_parts":[],"nested_details":0}
+            return
+        if self._capture is not None and tag=="details":
+            self._capture["nested_details"] += 1
+    def handle_data(self,data):
+        if self._capture is not None:
+            self._capture["html_parts"].append(data)
+            self._capture["text_parts"].append(data)
+    def handle_endtag(self,tag):
+        if self._capture is None or tag in self.VOID:
+            return
+        self._capture["html_parts"].append(f"</{tag}>")
+        if tag=="details":
+            if self._capture["nested_details"]>0:
+                self._capture["nested_details"]-=1
+                return
+            card=dict(self._capture)
+            card["html"]="".join(card.pop("html_parts"))
+            card["text"]=" ".join(card.pop("text_parts"))
+            self.cards.append(card)
+            self._capture=None
+
+def parse_video_cards(doc:str)->list[dict[str,Any]]:
+    parser=VideoCardParser()
+    parser.feed(doc)
+    parser.close()
+    return parser.cards
+
 def sha256(p:Path)->str:
     h=hashlib.sha256()
     with p.open("rb") as f:
@@ -153,22 +199,31 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
             if scan(txt): issues.append({"path":str(p.relative_to(root)),"message":"secret-like pattern detected"})
 
     doc=(root/"audit.html").read_text(encoding="utf-8",errors="replace")
-    card_count = len(re.findall(r"<details\\b[^>]*class=['\"]video-card['\"]", doc, re.I))
+    cards=parse_video_cards(doc)
+    card_count=len(cards)
     if card_count != len(vids):
         issues.append({"path":"audit.html","message":f"video card count {card_count} does not match discovered video count {len(vids)}"})
-    else:
-        cards = re.findall(r"<details\\b[^>]*class=['\"]video-card['\"][^>]*>(.*?)</details>", doc, re.I | re.S)
-        for i, card in enumerate(cards):
-            plain = re.sub(r"<[^>]+>", " ", card).lower()
-            for needle, label in (
-                ("original public evidence", "ORIGINAL PUBLIC EVIDENCE"),
-                ("audited findings", "AUDITED FINDINGS"),
-                ("beginner-friendly professional guidance", "BEGINNER-FRIENDLY PROFESSIONAL GUIDANCE"),
-            ):
-                if needle not in plain:
-                    issues.append({"path":f"video_cards[{i}]", "message":f"mandatory visible layer missing: {label}"})
-            if "transcript:" not in plain:
-                issues.append({"path":f"video_cards[{i}]", "message":"per-video transcript status is not visibly rendered"})
+    rendered_ids=[c.get("video_id") for c in cards]
+    if any(not x for x in rendered_ids):
+        issues.append({"path":"audit.html","message":"every video card must expose a non-empty data-video-id"})
+    if len(rendered_ids)!=len(set(rendered_ids)):
+        issues.append({"path":"audit.html","message":"duplicate video IDs rendered in HTML cards"})
+    inventory_ids=[x for x in vids if x]
+    if set(rendered_ids) != set(inventory_ids):
+        missing=sorted(set(inventory_ids)-set(rendered_ids))
+        extra=sorted(set(rendered_ids)-set(inventory_ids))
+        issues.append({"path":"audit.html","message":f"HTML/inventory video ID mismatch; missing={missing[:20]} extra={extra[:20]}"})
+    for i, card in enumerate(cards):
+        plain=re.sub(r"<[^>]+>"," ",card.get("text","")).lower()
+        for needle,label in (
+            ("original public evidence","ORIGINAL PUBLIC EVIDENCE"),
+            ("audited findings","AUDITED FINDINGS"),
+            ("beginner-friendly professional guidance","BEGINNER-FRIENDLY PROFESSIONAL GUIDANCE"),
+        ):
+            if needle not in plain:
+                issues.append({"path":f"video_cards[{i}]","message":f"mandatory visible layer missing: {label}"})
+        if "transcript:" not in plain:
+            issues.append({"path":f"video_cards[{i}]","message":"per-video transcript status is not visibly rendered"})
     hp=HTMLCheck(); hp.feed(doc)
     if not hp.html_lang: issues.append({"path":"audit.html","message":"missing html lang"})
     if hp.h1!=1: issues.append({"path":"audit.html","message":f"expected one H1, found {hp.h1}"})
