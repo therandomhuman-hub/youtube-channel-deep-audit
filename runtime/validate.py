@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse, csv, hashlib, json, math, re
 from html.parser import HTMLParser
 from pathlib import Path
+
+from .release_contract import canonical_contract_errors
 from typing import Any
 
 try:
@@ -59,6 +61,9 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
         schema=json.loads((root/"schema.json").read_text(encoding="utf-8"))
     except Exception as e:
         return [{"path":"audit.json","message":"invalid JSON: "+str(e)}],warnings
+
+    for message in canonical_contract_errors(report, schema):
+        issues.append({"path":"release_contract","message":message})
 
     if Draft202012Validator:
         checker=Draft202012Validator(schema, format_checker=FormatChecker())
