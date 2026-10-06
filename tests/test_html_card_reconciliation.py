@@ -40,5 +40,23 @@ class HtmlCardReconciliationTests(unittest.TestCase):
             issues, _ = validate(root)
             self.assertTrue(any("BEGINNER-FRIENDLY PROFESSIONAL GUIDANCE" in x["message"] for x in issues))
 
+
+    def test_nested_details_are_parsed_as_one_complete_card(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            html = """<!doctype html><html lang='en'><body><h1>x</h1>
+<details class='video-card'><summary>v1</summary>
+<h3>Original public evidence</h3><details><summary>nested</summary><p>inner</p></details>
+<h3>Audited findings</h3><p>audit</p>
+<h3>Beginner-friendly professional guidance</h3><p>guide</p>
+<p>Transcript: NO_TRANSCRIPT_FOUND</p>
+<a href='https://www.youtube.com/watch?v=abcdefghijk'>Open original YouTube video</a>
+</details></body></html>"""
+            self._package(root, html)
+            issues, _ = validate(root)
+            self.assertFalse(any("video card count" in x["message"] for x in issues))
+            self.assertFalse(any("mandatory visible layer missing" in x["message"] for x in issues))
+            self.assertFalse(any("video ID mismatch" in x["message"] for x in issues))
+
 if __name__ == "__main__":
     unittest.main()
