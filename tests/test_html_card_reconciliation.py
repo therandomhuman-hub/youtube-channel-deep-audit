@@ -27,6 +27,34 @@ class HtmlCardReconciliationTests(unittest.TestCase):
             issues, _ = validate(root)
             self.assertTrue(any("video card count" in x["message"] for x in issues))
 
+    def test_nested_details_card_is_parsed_as_one_complete_card(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            html = """<!doctype html><html lang='en'><body><h1>x</h1>
+<details class='video-card' data-video-id='v1'><summary>v1</summary>
+<h3>Original public evidence</h3>
+<details><summary>Original description</summary><p>x</p></details>
+<h3>Audited findings</h3><p>Transcript: FULL_TRANSCRIPT_AVAILABLE</p>
+<details><summary>Nested audit data</summary><p>y</p></details>
+<h3>Beginner-friendly professional guidance</h3><p>KEEP</p>
+</details></body></html>"""
+            self._package(root, html)
+            issues, _ = validate(root)
+            self.assertFalse(any("video card count" in x["message"] for x in issues))
+            self.assertFalse(any("videos missing from HTML" in x["message"] for x in issues))
+
+    def test_card_id_must_match_inventory(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            html = """<!doctype html><html lang='en'><body><h1>x</h1>
+<details class='video-card' data-video-id='wrong1'><summary>v1</summary>
+<h3>Original public evidence</h3><h3>Audited findings</h3>
+<p>Transcript: NO_TRANSCRIPT_FOUND</p><h3>Beginner-friendly professional guidance</h3>
+</details></body></html>"""
+            self._package(root, html)
+            issues, _ = validate(root)
+            self.assertTrue(any("videos missing from HTML" in x["message"] for x in issues))
+
     def test_card_missing_required_layer_is_issue(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

@@ -1107,7 +1107,7 @@ def render_html(report: dict[str, Any], path: Path) -> None:
         )
 
         cards.append(
-            f"<details class='video-card'>"
+            f"<details class='video-card' data-video-id='{esc(v.get('id'))}'>"
             f"<summary><strong>#{i}</strong> {esc(sn.get('title',''))} "
             f"<span class='pill'>{esc(a.get('decision','RESEARCH MORE'))}</span> "
             f"<span class='pill'>{esc(a.get('confidence','LOW'))} confidence</span></summary>"
