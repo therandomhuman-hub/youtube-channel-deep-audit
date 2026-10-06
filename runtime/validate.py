@@ -12,6 +12,10 @@ except Exception:
     Draft202012Validator = None
     FormatChecker = None
 
+CANONICAL_VERSION="12.1"
+CANONICAL_SCHEMA_ID="youtube-channel-deep-audit-v12.1.schema.json"
+CANONICAL_SCHEMA_TITLE="YouTube Channel Deep Audit v12.1 Production Report"
+
 CLAIM_STATES={"VERIFIED","CREATOR_REPORTED","OBSERVED","INFERRED","UNVERIFIED","CONTRADICTED","WITHDRAWN"}
 METRIC_STATES={"OBSERVED","DERIVED","ESTIMATED","REPORTED","UNAVAILABLE"}
 SECRET_PATTERNS=[
@@ -75,6 +79,16 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
         issues.append({"path":"metadata.input_contract.api_key_exposed","message":"must be false"})
     if report.get("reproducibility",{}).get("credential_exposed") is not False:
         issues.append({"path":"reproducibility.credential_exposed","message":"must be false"})
+    metadata=report.get("metadata",{}) or {}
+    if metadata.get("methodology_version") != CANONICAL_VERSION:
+        issues.append({"path":"metadata.methodology_version","message":f"must equal canonical {CANONICAL_VERSION}"})
+    if metadata.get("schema_version") != CANONICAL_VERSION:
+        issues.append({"path":"metadata.schema_version","message":f"must equal canonical {CANONICAL_VERSION}"})
+    if schema.get("$id") != CANONICAL_SCHEMA_ID:
+        issues.append({"path":"schema.$id","message":"schema identity does not match canonical v12.1"})
+    if schema.get("title") != CANONICAL_SCHEMA_TITLE:
+        issues.append({"path":"schema.title","message":"schema title does not match canonical v12.1"})
+
     coverage=report.get("coverage",{})
     inventory_complete=bool(coverage.get("inventory",{}).get("complete"))
     details_complete=bool(coverage.get("video_details_complete", coverage.get("video_details",{}).get("complete")))
