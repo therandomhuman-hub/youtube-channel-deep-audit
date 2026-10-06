@@ -12,6 +12,10 @@ except Exception:
     Draft202012Validator = None
     FormatChecker = None
 
+CANONICAL_VERSION="12.1"
+CANONICAL_SCHEMA_ID="youtube-channel-deep-audit-v12.1.schema.json"
+CANONICAL_SCHEMA_TITLE="YouTube Channel Deep Audit v12.1 Production Report"
+
 CLAIM_STATES={"VERIFIED","CREATOR_REPORTED","OBSERVED","INFERRED","UNVERIFIED","CONTRADICTED","WITHDRAWN"}
 METRIC_STATES={"OBSERVED","DERIVED","ESTIMATED","REPORTED","UNAVAILABLE"}
 SECRET_PATTERNS=[
@@ -71,7 +75,7 @@ def validate(root:Path)->tuple[list[dict[str,Any]],list[dict[str,Any]]]:
     required_fields=["metadata","channel","coverage","access_matrix","snapshots","videos","posts","comments_summary","playlists","channel_sections","transcripts","transcript_audit","sources","claims","metrics","calculations","risks","hypotheses","experiments","recommendations","benchmarks","knowledge_gaps","deltas","policy_checks","decision_queue","validation","executive_summary","beginner_plan","analysis","reproducibility","self_audit"]
     for f in required_fields:
         if f not in report: issues.append({"path":f,"message":"required report field missing"})
-    if report.get("metadata",{}).get("input_contract",{}).get("api_key_exposed") is not False:
+    metadata=report.get("metadata",{}) or {}\n    if metadata.get("methodology_version") != CANONICAL_VERSION:\n        issues.append({"path":"metadata.methodology_version","message":f"must equal canonical {CANONICAL_VERSION}"})\n    if metadata.get("schema_version") != CANONICAL_VERSION:\n        issues.append({"path":"metadata.schema_version","message":f"must equal canonical {CANONICAL_VERSION}"})\n    if schema.get("$id") != CANONICAL_SCHEMA_ID:\n        issues.append({"path":"schema.$id","message":"bundled schema does not match canonical v12.1 identity"})\n    if schema.get("title") != CANONICAL_SCHEMA_TITLE:\n        issues.append({"path":"schema.title","message":"bundled schema does not match canonical v12.1 title"})\n    if report.get("metadata",{}).get("input_contract",{}).get("api_key_exposed") is not False:
         issues.append({"path":"metadata.input_contract.api_key_exposed","message":"must be false"})
     if report.get("reproducibility",{}).get("credential_exposed") is not False:
         issues.append({"path":"reproducibility.credential_exposed","message":"must be false"})
