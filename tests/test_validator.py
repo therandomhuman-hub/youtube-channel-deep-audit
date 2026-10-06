@@ -39,7 +39,13 @@ class ValidatorTests(unittest.TestCase):
             report["videos"][0]["transcript_audit"]={"status":"NO_TRANSCRIPT_FOUND","text_retained":False}
             (root/"audit.json").write_text(json.dumps(report),encoding="utf-8")
             (root/"schema.json").write_text(json.dumps({"type":"object","required":[],"properties":{}}),encoding="utf-8")
-            (root/"audit.html").write_text("<!doctype html><html lang='en'><head></head><body><h1>x</h1><script>localStorage.setItem('x','1');window.print();</script></body></html>",encoding="utf-8")
+            (root/"audit.html").write_text("""<!doctype html><html lang='en'><head></head><body><h1>x</h1>
+<details class='video-card' data-video-id='v1'><summary>v1</summary>
+<h3>Original public evidence</h3><p>Video ID: v1</p>
+<h3>Audited findings</h3><p>Metadata-only bounded audit.</p><p>Transcript: NO_TRANSCRIPT_FOUND</p>
+<h3>Beginner-friendly professional guidance</h3><p>RESEARCH MORE</p>
+</details>
+<script>localStorage.setItem('x','1');window.print();</script></body></html>""",encoding="utf-8")
             (root/"video_inventory.csv").write_text("video_id\nv1\n",encoding="utf-8")
             (root/"comments.csv").write_text("video_id,kind,comment_id,text,published_at\n",encoding="utf-8")
             (root/"comments_coverage.csv").write_text("video_id,top_level_threads,replies_collected,complete,reply_pages,coverage\n",encoding="utf-8")
